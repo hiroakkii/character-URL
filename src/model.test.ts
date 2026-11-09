@@ -5,6 +5,7 @@ import {
   buildCaption,
   charsKey,
   findAbbr,
+  linkLabel,
   renderLinks,
   buildLinkList,
   buildTitle,
@@ -123,5 +124,19 @@ describe('cross-situation links', () => {
     // 旧データ（シリーズ単位）も拾う
     const old = { [seriesKey(['甘織れな子', '琴紗月'], '攻め')]: { abbr: 'さつれな' } };
     expect(findAbbr(old, ['琴紗月', '甘織れな子'], 'ハグ')).toBe('さつれな');
+  });
+});
+
+describe('default link labels', () => {
+  it('uses "characters situation number" when abbreviation is empty', () => {
+    const a = mk('甘織れな子＆琴紗月', 'キス', 1, '100000002');
+    const b = mk('甘織れな子＆琴紗月', 'キス', 2, '100000003');
+    const key = seriesKey(['甘織れな子', '琴紗月'], 'キス');
+    expect(linkLabel('', a)).toBe('甘織れな子＆琴紗月 キス 1');
+    expect(linkLabel('さつれな', a)).toBe('さつれな1');
+    expect(autoLinkRefs([a, b], key, 3, '').refs.map((r) => r.label)).toEqual([
+      '甘織れな子＆琴紗月 キス 1',
+      '甘織れな子＆琴紗月 キス 2',
+    ]);
   });
 });
