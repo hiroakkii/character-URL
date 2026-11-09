@@ -137,7 +137,17 @@ export function nextNumber(posts: Post[], key: string): number {
   return seriesPosts(posts, key).reduce((max, p) => Math.max(max, p.number), 0) + 1;
 }
 
-/** 同じシリーズの過去分を、略称＋シリーズ番号の見出しで自動作成 */
+/**
+ * リンクの見出し。略称があれば「略称＋番号」（例：さつれな1）、
+ * 未入力なら「キャラクター名 シチュエーション 番号」（例：甘織れな子＆琴紗月 キス 1）
+ */
+export function linkLabel(abbr: string, p: Pick<Post, 'characters' | 'situation' | 'number'>): string {
+  return abbr
+    ? `${abbr}${p.number}`
+    : buildTitle(p, { ...defaultSettings, showNumberOne: true });
+}
+
+/** 同じシリーズの過去分を、見出し付きで自動作成 */
 export function autoLinkRefs(
   posts: Post[],
   key: string,
@@ -152,7 +162,7 @@ export function autoLinkRefs(
       missing.push(p.number);
       continue;
     }
-    refs.push({ postId: p.id, label: `${abbr}${p.number}` });
+    refs.push({ postId: p.id, label: linkLabel(abbr, p) });
   }
   return { refs, missing };
 }

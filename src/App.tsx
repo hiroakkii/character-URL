@@ -13,6 +13,7 @@ import {
   compareNewest,
   illustUrl,
   joinCharacters,
+  linkLabel,
   nextNumber,
   normalize,
   parseBulkLines,
@@ -319,8 +320,7 @@ function EditView({
   const urlInvalid = urlText.trim() !== '' && !illustId;
   const duplicate = pool.find((p) => postSeriesKey(p) === key && p.number === number);
 
-  const abbrLabel = abbr || '（略称）';
-  const auto = useMemo(() => autoLinkRefs(pool, key, number, abbrLabel), [pool, key, number, abbrLabel]);
+  const auto = useMemo(() => autoLinkRefs(pool, key, number, abbr), [pool, key, number, abbr]);
   const links: LinkRef[] = manualLinks ?? auto.refs;
   const missing = manualLinks ? [] : auto.missing;
   const lines = renderLinks(pool, links, data.settings.linkFormat);
@@ -416,8 +416,9 @@ function EditView({
             />
           </div>
           <div>
-            <label>コメント用の略称</label>
-            <input value={abbr} onChange={(e) => setAbbrText(e.target.value)} placeholder="例：さつれな" />
+            <label>コメント用の略称（任意）</label>
+            <input value={abbr} onChange={(e) => setAbbrText(e.target.value)} placeholder="未入力：キャラ名 シチュ" />
+            <p className="hint">空欄なら「キャラ名 シチュ 番号」で貼ります</p>
           </div>
         </div>
         {duplicate && <p className="hint warn">このシリーズには既に番号{number}があります</p>}
@@ -461,7 +462,7 @@ function EditView({
         postById={postById}
         selfId={existing?.id}
         characters={characters}
-        abbrLabel={abbrLabel}
+        abbr={abbr}
         picking={picking}
         setPicking={setPicking}
         editLinks={editLinks}
@@ -482,7 +483,6 @@ function EditView({
           <button disabled={!caption} onClick={() => copy(caption, 'キャプション')}>コピー</button>
         </div>
         <pre className="out">{caption || '（解説と過去リンクがここに入ります）'}</pre>
-        {!abbr && lines.length > 0 && <p className="hint warn">略称を入力してください</p>}
         {missing.length > 0 && <p className="hint warn">番号 {missing.join('・')} はURL未登録のためリンクに含まれていません</p>}
       </div>
 
@@ -507,7 +507,7 @@ function LinkEditor({
   postById,
   selfId,
   characters,
-  abbrLabel,
+  abbr,
   picking,
   setPicking,
   editLinks,
@@ -520,7 +520,7 @@ function LinkEditor({
   postById: Map<string, Post>;
   selfId?: string;
   characters: string[];
-  abbrLabel: string;
+  abbr: string;
   picking: boolean;
   setPicking: (v: boolean) => void;
   editLinks: (fn: (cur: LinkRef[]) => LinkRef[]) => void;
@@ -532,7 +532,7 @@ function LinkEditor({
   const renumber = (cur: LinkRef[]) =>
     cur.map((l, i) => {
       const m = l.label.match(/^(.*?)(\d+)$/);
-      return m && m[1] === abbrLabel ? { ...l, label: `${abbrLabel}${i + 1}` } : l;
+      return abbr && m && m[1] === abbr ? { ...l, label: `${abbr}${i + 1}` } : l;
     });
   const move = (i: number, d: number) =>
     editLinks((cur) => {
@@ -603,7 +603,9 @@ function LinkEditor({
                 <span>{buildTitle(p, settings)}</span>
                 <button
                   onClick={() =>
-                    editLinks((cur) => renumber([...cur, { postId: p.id, label: `${abbrLabel}${cur.length + 1}` }]))
+                    editLinks((cur) =>
+                      renumber([...cur, { postId: p.id, label: abbr ? `${abbr}${cur.length + 1}` : linkLabel('', p) }]),
+                    )
                   }
                 >
                   追加
@@ -649,7 +651,7 @@ function SeriesView({
     );
   }
   const first = posts[0];
-  const { lines } = buildLinkList(data.posts, key, Infinity, abbr || '（略称）', data.settings.linkFormat);
+  const { lines } = buildLinkList(data.posts, key, Infinity, abbr, data.settings.linkFormat);
 
   const saveAbbr = () => {
     update((d) => ({ ...d, series: { ...d.series, [charsKey(first.characters)]: { abbr: abbr.trim() } } }));
@@ -695,9 +697,9 @@ function SeriesView({
       <h1>{joinCharacters(first.characters)} {first.situation}</h1>
 
       <div className="card">
-        <label>コメント用の略称</label>
+        <label>コメント用の略称（任意）</label>
         <div className="row nowrap">
-          <input value={abbr} onChange={(e) => setAbbr(e.target.value)} placeholder="例：さつれな" />
+          <input value={abbr} onChange={(e) => setAbbr(e.target.value)} placeholder="未入力：キャラ名 シチュ" />
           <button onClick={saveAbbr}>保存</button>
         </div>
       </div>
