@@ -96,8 +96,9 @@ export function buildTitle(
   p: Pick<Post, 'characters' | 'situation' | 'number'>,
   settings: Settings = defaultSettings,
 ): string {
-  const num = p.number > 1 || settings.showNumberOne ? String(p.number) : '';
-  return `${joinCharacters(p.characters)}　${p.situation}${num}`;
+  const showNum = p.number > 1 || settings.showNumberOne;
+  // キャラクター名・シチュエーション・番号は半角スペース区切り
+  return `${joinCharacters(p.characters)} ${p.situation}${showNum ? ` ${p.number}` : ''}`;
 }
 
 /** シリーズ内の投稿（番号の小さい順） */

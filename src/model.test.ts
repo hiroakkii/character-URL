@@ -50,8 +50,8 @@ describe('series', () => {
     expect(nextNumber(posts, seriesKey(['新キャラ'], 'x'))).toBe(1);
   });
   it('builds title', () => {
-    expect(buildTitle(posts[0])).toBe('甘織れな子＆琴紗月　攻め');
-    expect(buildTitle(posts[1])).toBe('甘織れな子＆琴紗月　攻め2');
+    expect(buildTitle(posts[0])).toBe('甘織れな子＆琴紗月 攻め');
+    expect(buildTitle(posts[1])).toBe('甘織れな子＆琴紗月 攻め 2');
   });
   it('builds caption with all previous links', () => {
     const key = seriesKey(['甘織れな子', '琴紗月'], '攻め');

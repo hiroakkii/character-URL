@@ -242,18 +242,46 @@ function EditView({
   const [description, setDescription] = useState(existing?.description ?? '');
   const [urlText, setUrlText] = useState(existing?.illustId ? illustUrl(existing.illustId) : '');
   const [abbrText, setAbbrText] = useState<string | null>(null);
+  const [pastText, setPastText] = useState('');
+  const [showPast, setShowPast] = useState(false);
 
   const characters = splitCharacters(charsText);
   const key = seriesKey(characters, situation);
-  const autoNumber = nextNumber(others, key);
+
+  // 貼り付けた過去作（保存時に一緒に登録される）。同じ番号が既にあればURLを上書き
+  const pending = useMemo(() => {
+    const byNumber = new Map<number, string>();
+    for (const it of parseBulkLines(pastText)) byNumber.set(it.number, it.illustId);
+    return [...byNumber].map(([number, illustId]) => ({ number, illustId }));
+  }, [pastText]);
+  const pool = useMemo<Post[]>(() => {
+    if (!pending.length) return others;
+    const nums = new Set(pending.map((p) => p.number));
+    const kept = others.filter((p) => !(postSeriesKey(p) === key && nums.has(p.number)));
+    const now = Date.now();
+    const virtual: Post[] = pending.map((it) => ({
+      id: `pending-${it.number}`,
+      characters,
+      situation,
+      number: it.number,
+      description: '',
+      illustId: it.illustId,
+      createdAt: now,
+      updatedAt: now,
+    }));
+    return [...kept, ...virtual];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [others, pending, key]);
+
+  const autoNumber = nextNumber(pool, key);
   const number = numberText ? Math.max(1, Number(numberText) || 1) : existing ? existing.number : autoNumber;
-  const seriesCount = seriesPosts(others, key).length;
+  const seriesCount = seriesPosts(pool, key).length;
   const abbr = abbrText ?? data.series[key]?.abbr ?? '';
   const illustId = parseIllustId(urlText);
   const urlInvalid = urlText.trim() !== '' && !illustId;
-  const duplicate = others.find((p) => postSeriesKey(p) === key && p.number === number);
+  const duplicate = pool.find((p) => postSeriesKey(p) === key && p.number === number);
 
-  const { lines, missing } = buildLinkList(others, key, number, abbr || '（略称）', data.settings.linkFormat);
+  const { lines, missing } = buildLinkList(pool, key, number, abbr || '（略称）', data.settings.linkFormat);
   const title = characters.length && situation ? buildTitle({ characters, situation, number }, data.settings) : '';
   const caption = buildCaption(description, lines);
   const canSave = characters.length > 0 && situation.trim() !== '' && !urlInvalid;
@@ -274,11 +302,28 @@ function EditView({
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
-    update((d) => ({
-      ...d,
-      posts: existing ? d.posts.map((p) => (p.id === post.id ? post : p)) : [...d.posts, post],
-      series: abbr ? { ...d.series, [key]: { abbr } } : d.series,
-    }));
+    update((d) => {
+      let posts = existing ? d.posts.map((p) => (p.id === post.id ? post : p)) : [...d.posts, post];
+      pending.forEach((it, i) => {
+        const idx = posts.findIndex((p) => p.id !== post.id && postSeriesKey(p) === key && p.number === it.number);
+        if (idx >= 0) posts[idx] = { ...posts[idx], illustId: it.illustId, updatedAt: now };
+        else
+          posts = [
+            ...posts,
+            {
+              id: crypto.randomUUID(),
+              characters,
+              situation: situation.trim(),
+              number: it.number,
+              description: '',
+              illustId: it.illustId,
+              createdAt: now - (pending.length - i) - 1,
+              updatedAt: now,
+            },
+          ];
+      });
+      return { ...d, posts, series: abbr ? { ...d.series, [key]: { abbr } } : d.series };
+    });
     notify(existing ? '更新しました' : '保存しました');
     setView({ name: 'series', key });
   };
@@ -343,6 +388,23 @@ function EditView({
         />
         {urlInvalid && <p className="hint warn">作品IDを読み取れません</p>}
         {illustId && <p className="hint ok">作品ID：{illustId}</p>}
+
+        <button className="link" onClick={() => setShowPast((v) => !v)}>
+          {showPast ? '▾' : '▸'} 過去の投稿も登録する{pending.length ? `（${pending.length}件）` : ''}
+        </button>
+        {showPast && (
+          <>
+            <p className="hint">
+              このアプリに未登録の過去作を、1行に「略称＋番号 URL」で貼り付けます。保存時に一緒に登録され、番号は続きから自動で入ります。
+            </p>
+            <textarea
+              rows={4}
+              value={pastText}
+              onChange={(e) => setPastText(e.target.value)}
+              placeholder={'さつれな1 illust/149961440\nさつれな2 illust/149992313\nさつれな3 illust/151689661'}
+            />
+          </>
+        )}
       </div>
 
       <h2>pixivに貼り付ける内容</h2>
@@ -448,7 +510,7 @@ function SeriesView({
       <button className="link" onClick={() => setView({ name: 'search' })}>
         ‹ 検索に戻る
       </button>
-      <h1>{joinCharacters(first.characters)}　{first.situation}</h1>
+      <h1>{joinCharacters(first.characters)} {first.situation}</h1>
 
       <div className="card">
         <label>コメント用の略称</label>
