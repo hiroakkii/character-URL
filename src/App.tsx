@@ -1,17 +1,24 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppData,
+  LinkRef,
   Post,
   SearchMode,
+  autoLinkRefs,
   buildCaption,
   buildLinkList,
+  charsKey,
+  findAbbr,
   buildTitle,
+  compareNewest,
   illustUrl,
   joinCharacters,
   nextNumber,
+  normalize,
   parseBulkLines,
   parseIllustId,
   postSeriesKey,
+  renderLinks,
   search,
   seriesKey,
   seriesPosts,
@@ -264,6 +271,10 @@ function EditView({
   const [abbrText, setAbbrText] = useState<string | null>(null);
   const [pastText, setPastText] = useState('');
   const [showPast, setShowPast] = useState(false);
+  // null = 同じシリーズの過去分を自動で貼る / 配列 = 手動で指定した一覧
+  const [manualLinks, setManualLinks] = useState<LinkRef[] | null>(existing?.links ?? null);
+  const [picking, setPicking] = useState(false);
+  const newIds = useRef(new Map<string, string>());
 
   const characters = splitCharacters(charsText);
   const key = seriesKey(characters, situation);
@@ -272,15 +283,22 @@ function EditView({
   const pending = useMemo(() => {
     const byNumber = new Map<number, string>();
     for (const it of parseBulkLines(pastText)) byNumber.set(it.number, it.illustId);
-    return [...byNumber].map(([number, illustId]) => ({ number, illustId }));
-  }, [pastText]);
+    return [...byNumber].map(([number, illustId]) => {
+      // 既存の投稿を上書きする場合はその id、新規なら（再計算しても変わらない）新しい id
+      const old = others.find((p) => postSeriesKey(p) === key && p.number === number);
+      const nk = `${key}|${number}`;
+      if (!old && !newIds.current.has(nk)) newIds.current.set(nk, crypto.randomUUID());
+      return { id: old?.id ?? newIds.current.get(nk)!, number, illustId };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pastText, others, key]);
   const pool = useMemo<Post[]>(() => {
     if (!pending.length) return others;
     const nums = new Set(pending.map((p) => p.number));
     const kept = others.filter((p) => !(postSeriesKey(p) === key && nums.has(p.number)));
     const now = Date.now();
     const virtual: Post[] = pending.map((it) => ({
-      id: `pending-${it.number}`,
+      id: it.id,
       characters,
       situation,
       number: it.number,
@@ -296,12 +314,19 @@ function EditView({
   const autoNumber = nextNumber(pool, key);
   const number = numberText ? Math.max(1, Number(numberText) || 1) : existing ? existing.number : autoNumber;
   const seriesCount = seriesPosts(pool, key).length;
-  const abbr = abbrText ?? data.series[key]?.abbr ?? '';
+  const abbr = abbrText ?? findAbbr(data.series, characters, situation);
   const illustId = parseIllustId(urlText);
   const urlInvalid = urlText.trim() !== '' && !illustId;
   const duplicate = pool.find((p) => postSeriesKey(p) === key && p.number === number);
 
-  const { lines, missing } = buildLinkList(pool, key, number, abbr || '（略称）', data.settings.linkFormat);
+  const abbrLabel = abbr || '（略称）';
+  const auto = useMemo(() => autoLinkRefs(pool, key, number, abbrLabel), [pool, key, number, abbrLabel]);
+  const links: LinkRef[] = manualLinks ?? auto.refs;
+  const missing = manualLinks ? [] : auto.missing;
+  const lines = renderLinks(pool, links, data.settings.linkFormat);
+  const postById = useMemo(() => new Map(pool.map((p) => [p.id, p])), [pool]);
+  // 一覧を編集すると、その時点の内容で固定される（自動に戻すこともできる）
+  const editLinks = (fn: (cur: LinkRef[]) => LinkRef[]) => setManualLinks(fn(links.map((l) => ({ ...l }))));
   const title = characters.length && situation ? buildTitle({ characters, situation, number }, data.settings) : '';
   const caption = buildCaption(description, lines);
   const canSave = characters.length > 0 && situation.trim() !== '' && !urlInvalid;
@@ -319,6 +344,7 @@ function EditView({
       number,
       description,
       illustId,
+      links: manualLinks ?? undefined,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
@@ -331,7 +357,7 @@ function EditView({
           posts = [
             ...posts,
             {
-              id: crypto.randomUUID(),
+              id: it.id,
               characters,
               situation: situation.trim(),
               number: it.number,
@@ -342,7 +368,7 @@ function EditView({
             },
           ];
       });
-      return { ...d, posts, series: abbr ? { ...d.series, [key]: { abbr } } : d.series };
+      return { ...d, posts, series: abbr ? { ...d.series, [charsKey(characters)]: { abbr } } : d.series };
     });
     notify(existing ? '更新しました' : '保存しました');
     setView({ name: 'series', key });
@@ -427,6 +453,22 @@ function EditView({
         )}
       </div>
 
+      <h2>キャプションに貼るリンク</h2>
+      <LinkEditor
+        links={links}
+        manual={manualLinks !== null}
+        posts={data.posts}
+        postById={postById}
+        selfId={existing?.id}
+        characters={characters}
+        abbrLabel={abbrLabel}
+        picking={picking}
+        setPicking={setPicking}
+        editLinks={editLinks}
+        resetAuto={() => setManualLinks(null)}
+        settings={data.settings}
+      />
+
       <h2>pixivに貼り付ける内容</h2>
       <div className="card">
         <div className="out-head">
@@ -456,6 +498,126 @@ function EditView({
   );
 }
 
+/* ---------------- キャプションのリンク指定 ---------------- */
+
+function LinkEditor({
+  links,
+  manual,
+  posts,
+  postById,
+  selfId,
+  characters,
+  abbrLabel,
+  picking,
+  setPicking,
+  editLinks,
+  resetAuto,
+  settings,
+}: {
+  links: LinkRef[];
+  manual: boolean;
+  posts: Post[];
+  postById: Map<string, Post>;
+  selfId?: string;
+  characters: string[];
+  abbrLabel: string;
+  picking: boolean;
+  setPicking: (v: boolean) => void;
+  editLinks: (fn: (cur: LinkRef[]) => LinkRef[]) => void;
+  resetAuto: () => void;
+  settings: AppData['settings'];
+}) {
+  const [q, setQ] = useState('');
+  // 並べ替え・追加・削除のあと、「略称＋数字」の見出しは並び順に合わせて振り直す（自由に書き換えた見出しはそのまま）
+  const renumber = (cur: LinkRef[]) =>
+    cur.map((l, i) => {
+      const m = l.label.match(/^(.*?)(\d+)$/);
+      return m && m[1] === abbrLabel ? { ...l, label: `${abbrLabel}${i + 1}` } : l;
+    });
+  const move = (i: number, d: number) =>
+    editLinks((cur) => {
+      const j = i + d;
+      if (j < 0 || j >= cur.length) return cur;
+      [cur[i], cur[j]] = [cur[j], cur[i]];
+      return renumber(cur);
+    });
+
+  const candidates = useMemo(() => {
+    if (!picking) return [];
+    const used = new Set(links.map((l) => l.postId));
+    const nq = normalize(q);
+    const mine = new Set(characters.map(normalize));
+    const shares = (p: Post) => p.characters.some((c) => mine.has(normalize(c)));
+    return posts
+      .filter((p) => p.id !== selfId && p.illustId && !used.has(p.id))
+      .filter((p) => !nq || normalize(`${p.characters.join('')}${p.situation}`).includes(nq))
+      .sort((a, b) => Number(shares(b)) - Number(shares(a)) || compareNewest(a, b))
+      .slice(0, 40);
+  }, [picking, posts, links, q, selfId, characters]);
+
+  return (
+    <div className="card">
+      <p className="hint" style={{ marginTop: 0 }}>
+        {manual
+          ? '手動で指定した一覧です。見出しは自由に書き換えられます。'
+          : '同じシリーズの過去分を自動で入れています。追加・削除・並べ替え・見出しの変更をすると、その内容で固定されます。'}
+      </p>
+
+      {links.length === 0 && <p className="muted">リンクはまだありません。</p>}
+      <ul className="links">
+        {links.map((l, i) => {
+          const p = postById.get(l.postId) ?? posts.find((x) => x.id === l.postId);
+          return (
+            <li key={l.postId}>
+              <input
+                value={l.label}
+                aria-label="見出し"
+                onChange={(e) => editLinks((cur) => cur.map((c, k) => (k === i ? { ...c, label: e.target.value } : c)))}
+              />
+              <div className="links-target">
+                {p ? buildTitle(p, settings) : '（削除された投稿）'}
+                {p && !p.illustId && <span className="badge">　URL未登録</span>}
+              </div>
+              <div className="links-ctl">
+                <button aria-label="上へ" disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
+                <button aria-label="下へ" disabled={i === links.length - 1} onClick={() => move(i, 1)}>↓</button>
+                <button aria-label="削除" onClick={() => editLinks((cur) => renumber(cur.filter((_, k) => k !== i)))}>×</button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+
+      <div className="row">
+        <button onClick={() => setPicking(!picking)}>{picking ? '閉じる' : '＋ 別の投稿のリンクを追加'}</button>
+        {manual && <button onClick={resetAuto}>自動に戻す</button>}
+      </div>
+
+      {picking && (
+        <div className="picker">
+          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="キャラ名・シチュで絞り込み" aria-label="絞り込み" />
+          <p className="hint">同じキャラの投稿が上に、その中は新しい順です（URL登録済みのみ）。</p>
+          <ul className="list">
+            {candidates.map((p) => (
+              <li key={p.id} className="pick">
+                <span>{buildTitle(p, settings)}</span>
+                <button
+                  onClick={() =>
+                    editLinks((cur) => renumber([...cur, { postId: p.id, label: `${abbrLabel}${cur.length + 1}` }]))
+                  }
+                >
+                  追加
+                </button>
+              </li>
+            ))}
+            {candidates.length === 0 && <li className="muted">追加できる投稿がありません。</li>}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---------------- シリーズ ---------------- */
 
 function SeriesView({
@@ -474,7 +636,7 @@ function SeriesView({
   notify: (m: string) => void;
 }) {
   const posts = seriesPosts(data.posts, key);
-  const [abbr, setAbbr] = useState(data.series[key]?.abbr ?? '');
+  const [abbr, setAbbr] = useState(posts[0] ? findAbbr(data.series, posts[0].characters, posts[0].situation) : '');
   const [bulk, setBulk] = useState('');
   const [showBulk, setShowBulk] = useState(false);
 
@@ -490,7 +652,7 @@ function SeriesView({
   const { lines } = buildLinkList(data.posts, key, Infinity, abbr || '（略称）', data.settings.linkFormat);
 
   const saveAbbr = () => {
-    update((d) => ({ ...d, series: { ...d.series, [key]: { abbr: abbr.trim() } } }));
+    update((d) => ({ ...d, series: { ...d.series, [charsKey(first.characters)]: { abbr: abbr.trim() } } }));
     notify('略称を保存しました');
   };
 
