@@ -1,5 +1,11 @@
 // データモデルと純粋なロジック（保存・UIに依存しない部分）
 
+/** キャプションに貼るリンク（見出しと、リンク先の投稿） */
+export interface LinkRef {
+  postId: string;
+  label: string;
+}
+
 export interface Post {
   id: string;
   /** キャラクター名（カップリングは複数） 例: ["甘織れな子", "琴紗月"] */
@@ -12,6 +18,8 @@ export interface Post {
   description: string;
   /** pixiv 作品ID（投稿前は空） */
   illustId: string;
+  /** キャプションのリンクを手動で指定した場合のみ保存（未指定なら同じシリーズの過去分を自動で貼る） */
+  links?: LinkRef[];
   createdAt: number;
   updatedAt: number;
 }
@@ -73,6 +81,25 @@ export function seriesKey(characters: string[], situation: string): string {
   return `${chars}::${normalize(situation)}`;
 }
 
+/** キャラの組み合わせ（順不同）だけのキー。略称はこの単位で持つ */
+export const charsKey = (characters: string[]) => characters.map(normalize).sort().join('|');
+
+/** 略称を探す：組み合わせ単位 → 同じシリーズ → 同じ組み合わせの別シリーズ（旧データ） */
+export function findAbbr(
+  series: Record<string, SeriesMeta>,
+  characters: string[],
+  situation: string,
+): string {
+  if (!characters.length) return '';
+  const ck = charsKey(characters);
+  return (
+    series[ck]?.abbr ??
+    series[seriesKey(characters, situation)]?.abbr ??
+    Object.entries(series).find(([k]) => k.startsWith(`${ck}::`))?.[1].abbr ??
+    ''
+  );
+}
+
 export const postSeriesKey = (p: Pick<Post, 'characters' | 'situation'>) =>
   seriesKey(p.characters, p.situation);
 
@@ -96,8 +123,9 @@ export function buildTitle(
   p: Pick<Post, 'characters' | 'situation' | 'number'>,
   settings: Settings = defaultSettings,
 ): string {
-  const num = p.number > 1 || settings.showNumberOne ? String(p.number) : '';
-  return `${joinCharacters(p.characters)}　${p.situation}${num}`;
+  const showNum = p.number > 1 || settings.showNumberOne;
+  // キャラクター名・シチュエーション・番号は半角スペース区切り
+  return `${joinCharacters(p.characters)} ${p.situation}${showNum ? ` ${p.number}` : ''}`;
 }
 
 /** シリーズ内の投稿（番号の小さい順） */
@@ -109,6 +137,37 @@ export function nextNumber(posts: Post[], key: string): number {
   return seriesPosts(posts, key).reduce((max, p) => Math.max(max, p.number), 0) + 1;
 }
 
+/** 同じシリーズの過去分を、略称＋シリーズ番号の見出しで自動作成 */
+export function autoLinkRefs(
+  posts: Post[],
+  key: string,
+  beforeNumber: number,
+  abbr: string,
+): { refs: LinkRef[]; missing: number[] } {
+  const refs: LinkRef[] = [];
+  const missing: number[] = [];
+  for (const p of seriesPosts(posts, key)) {
+    if (p.number >= beforeNumber) continue;
+    if (!p.illustId) {
+      missing.push(p.number);
+      continue;
+    }
+    refs.push({ postId: p.id, label: `${abbr}${p.number}` });
+  }
+  return { refs, missing };
+}
+
+/** リンク指定 → キャプション用の行（URL未登録・削除済みの投稿は除く） */
+export function renderLinks(posts: Post[], refs: LinkRef[], format: Settings['linkFormat']): string[] {
+  const byId = new Map(posts.map((p) => [p.id, p]));
+  const lines: string[] = [];
+  for (const r of refs) {
+    const p = byId.get(r.postId);
+    if (p?.illustId) lines.push(`${r.label} ${illustUrl(p.illustId, format)}`);
+  }
+  return lines;
+}
+
 /** 過去リンク一覧（指定番号より前の投稿すべて） */
 export function buildLinkList(
   posts: Post[],
@@ -117,17 +176,8 @@ export function buildLinkList(
   abbr: string,
   format: Settings['linkFormat'],
 ): { lines: string[]; missing: number[] } {
-  const lines: string[] = [];
-  const missing: number[] = [];
-  for (const p of seriesPosts(posts, key)) {
-    if (p.number >= beforeNumber) continue;
-    if (!p.illustId) {
-      missing.push(p.number);
-      continue;
-    }
-    lines.push(`${abbr}${p.number} ${illustUrl(p.illustId, format)}`);
-  }
-  return { lines, missing };
+  const { refs, missing } = autoLinkRefs(posts, key, beforeNumber, abbr);
+  return { lines: renderLinks(posts, refs, format), missing };
 }
 
 export function buildCaption(description: string, linkLines: string[]): string {
@@ -217,6 +267,9 @@ export function validateData(raw: unknown): AppData {
       number: Number(p.number) || 1,
       description: String(p.description ?? ''),
       illustId: String(p.illustId ?? ''),
+      links: Array.isArray(p.links)
+        ? p.links.map((l) => ({ postId: String(l.postId), label: String(l.label ?? '') }))
+        : undefined,
       createdAt: Number(p.createdAt) || Date.now(),
       updatedAt: Number(p.updatedAt) || Date.now(),
     };

@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   Post,
+  autoLinkRefs,
   buildCaption,
+  charsKey,
+  findAbbr,
+  renderLinks,
   buildLinkList,
   buildTitle,
   nextNumber,
@@ -50,8 +54,8 @@ describe('series', () => {
     expect(nextNumber(posts, seriesKey(['新キャラ'], 'x'))).toBe(1);
   });
   it('builds title', () => {
-    expect(buildTitle(posts[0])).toBe('甘織れな子＆琴紗月　攻め');
-    expect(buildTitle(posts[1])).toBe('甘織れな子＆琴紗月　攻め2');
+    expect(buildTitle(posts[0])).toBe('甘織れな子＆琴紗月 攻め');
+    expect(buildTitle(posts[1])).toBe('甘織れな子＆琴紗月 攻め 2');
   });
   it('builds caption with all previous links', () => {
     const key = seriesKey(['甘織れな子', '琴紗月'], '攻め');
@@ -85,5 +89,39 @@ describe('parseBulkLines', () => {
       { number: 1, illustId: '149961440' },
       { number: 2, illustId: '149992313' },
     ]);
+  });
+});
+
+describe('cross-situation links', () => {
+  const hug = mk('甘織れな子＆琴紗月', 'ハグ', 1, '100000001');
+  const kiss1 = mk('甘織れな子＆琴紗月', 'キス', 1, '100000002');
+  const all = [hug, kiss1];
+
+  it('auto links only the same series', () => {
+    const key = seriesKey(['甘織れな子', '琴紗月'], 'キス');
+    const { refs } = autoLinkRefs(all, key, 2, 'さつれな');
+    expect(refs).toEqual([{ postId: kiss1.id, label: 'さつれな1' }]);
+  });
+
+  it('renders manual links in the given order with custom labels', () => {
+    const lines = renderLinks(
+      all,
+      [
+        { postId: hug.id, label: 'さつれな1' },
+        { postId: kiss1.id, label: 'さつれな2' },
+        { postId: 'deleted', label: 'さつれな3' },
+      ],
+      'short',
+    );
+    expect(lines).toEqual(['さつれな1 illust/100000001', 'さつれな2 illust/100000002']);
+  });
+
+  it('shares the abbreviation across situations of the same couple', () => {
+    const series = { [charsKey(['琴紗月', '甘織れな子'])]: { abbr: 'さつれな' } };
+    expect(findAbbr(series, ['甘織れな子', '琴紗月'], 'キス')).toBe('さつれな');
+    expect(findAbbr(series, ['別キャラ'], 'キス')).toBe('');
+    // 旧データ（シリーズ単位）も拾う
+    const old = { [seriesKey(['甘織れな子', '琴紗月'], '攻め')]: { abbr: 'さつれな' } };
+    expect(findAbbr(old, ['琴紗月', '甘織れな子'], 'ハグ')).toBe('さつれな');
   });
 });
