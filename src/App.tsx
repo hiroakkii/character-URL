@@ -76,13 +76,13 @@ export default function App() {
 
       <nav className="tabbar">
         <button className={view.name === 'search' || view.name === 'series' ? 'on' : ''} onClick={() => setView({ name: 'search' })}>
-          <span className="ico">🔍</span>検索
+          <IconSearch />検索
         </button>
         <button className={view.name === 'edit' && !view.postId ? 'on' : ''} onClick={() => setView({ name: 'edit' })}>
-          <span className="ico">＋</span>新規投稿
+          <IconPlus />新規投稿
         </button>
         <button className={view.name === 'settings' ? 'on' : ''} onClick={() => setView({ name: 'settings' })}>
-          <span className="ico">⚙</span>設定
+          <IconGear />設定
         </button>
       </nav>
     </div>
@@ -101,27 +101,25 @@ function SearchView({ data, setView, copy }: { data: AppData; setView: (v: View)
       return {};
     }
   })();
-  const [tab, setTab] = useState<'single' | 'both'>(saved.tab ?? 'single');
-  const [target, setTarget] = useState<'character' | 'situation'>(saved.target ?? 'character');
+  const [mode, setMode] = useState<SearchMode>(saved.mode ?? 'character');
   const [q, setQ] = useState<string>(saved.q ?? '');
   const [cq, setCq] = useState<string>(saved.cq ?? '');
   const [sq, setSq] = useState<string>(saved.sq ?? '');
 
   useEffect(() => {
     try {
-      sessionStorage.setItem(SEARCH_STATE_KEY, JSON.stringify({ tab, target, q, cq, sq }));
+      sessionStorage.setItem(SEARCH_STATE_KEY, JSON.stringify({ mode, q, cq, sq }));
     } catch {
       /* ignore */
     }
-  }, [tab, target, q, cq, sq]);
+  }, [mode, q, cq, sq]);
 
-  const mode: SearchMode = tab === 'both' ? 'both' : target;
   const results = useMemo(
     () =>
-      tab === 'both'
+      mode === 'both'
         ? search(data.posts, 'both', cq, sq)
-        : search(data.posts, mode, target === 'character' ? q : '', target === 'situation' ? q : ''),
-    [data.posts, tab, mode, target, q, cq, sq],
+        : search(data.posts, mode, mode === 'character' ? q : '', mode === 'situation' ? q : ''),
+    [data.posts, mode, q, cq, sq],
   );
 
   const chars = useMemo(() => uniqueCharacters(data.posts), [data.posts]);
@@ -129,46 +127,40 @@ function SearchView({ data, setView, copy }: { data: AppData; setView: (v: View)
 
   return (
     <section>
-      <h1>投稿を検索</h1>
-      <div className="seg">
-        <button className={tab === 'single' ? 'on' : ''} onClick={() => setTab('single')}>
-          キャラ / シチュ
-        </button>
-        <button className={tab === 'both' ? 'on' : ''} onClick={() => setTab('both')}>
-          キャラ ＋ シチュ
-        </button>
-      </div>
+      <div className="searchbar">
+        <div className="seg" role="tablist" aria-label="検索方法">
+          <button className={mode === 'character' ? 'on' : ''} onClick={() => setMode('character')}>
+            キャラ名
+          </button>
+          <button className={mode === 'situation' ? 'on' : ''} onClick={() => setMode('situation')}>
+            シチュ
+          </button>
+          <button className={mode === 'both' ? 'on' : ''} onClick={() => setMode('both')}>
+            キャラ＋シチュ
+          </button>
+        </div>
 
-      {tab === 'single' ? (
-        <div className="card">
-          <div className="seg small">
-            <button className={target === 'character' ? 'on' : ''} onClick={() => setTarget('character')}>
-              キャラクター名
-            </button>
-            <button className={target === 'situation' ? 'on' : ''} onClick={() => setTarget('situation')}>
-              シチュエーション
-            </button>
+        {mode === 'both' ? (
+          <div className="pair">
+            <input type="search" value={cq} onChange={(e) => setCq(e.target.value)} placeholder="キャラ名　例：琴紗月" list="dl-chars" aria-label="キャラクター名" />
+            <input type="search" value={sq} onChange={(e) => setSq(e.target.value)} placeholder="シチュ　例：攻守逆" list="dl-sits" aria-label="シチュエーション" />
           </div>
+        ) : (
           <input
             type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder={target === 'character' ? '例：琴紗月' : '例：攻守逆'}
-            list={target === 'character' ? 'dl-chars' : 'dl-sits'}
+            placeholder={mode === 'character' ? 'キャラ名で検索　例：琴紗月' : 'シチュエーションで検索　例：攻守逆'}
+            list={mode === 'character' ? 'dl-chars' : 'dl-sits'}
+            aria-label={mode === 'character' ? 'キャラクター名' : 'シチュエーション'}
           />
-        </div>
-      ) : (
-        <div className="card">
-          <label>キャラクター名</label>
-          <input type="search" value={cq} onChange={(e) => setCq(e.target.value)} placeholder="例：琴紗月" list="dl-chars" />
-          <label>シチュエーション</label>
-          <input type="search" value={sq} onChange={(e) => setSq(e.target.value)} placeholder="例：攻守逆" list="dl-sits" />
-        </div>
-      )}
+        )}
+      </div>
       <datalist id="dl-chars">{chars.map((c) => <option key={c} value={c} />)}</datalist>
       <datalist id="dl-sits">{sits.map((s) => <option key={s} value={s} />)}</datalist>
 
-      <p className="muted">{results.length}件（新しい順）</p>
+
+      <p className="muted">{results.length}件・新しい順</p>
 
       {data.posts.length === 0 && (
         <div className="empty">
@@ -191,7 +183,7 @@ function PostCard({ post, data, setView, copy }: { post: Post; data: AppData; se
   const title = buildTitle(post, data.settings);
   const url = post.illustId ? illustUrl(post.illustId) : '';
   return (
-    <li className="card post">
+    <li className="post">
       <div className="post-title">{title}</div>
       <div className="post-meta">
         {url ? (
@@ -201,16 +193,44 @@ function PostCard({ post, data, setView, copy }: { post: Post; data: AppData; se
         ) : (
           <span className="badge">URL未登録</span>
         )}
-        <span>{new Date(post.createdAt).toLocaleDateString('ja-JP')}</span>
+        <span className="date">{new Date(post.createdAt).toLocaleDateString('ja-JP')}</span>
       </div>
       {post.description && <p className="post-desc">{post.description}</p>}
-      <div className="row">
-        <button onClick={() => copy(title, 'タイトル')}>タイトル</button>
-        {url && <button onClick={() => copy(url, 'URL')}>URL</button>}
-        <button onClick={() => setView({ name: 'series', key: postSeriesKey(post) })}>シリーズ</button>
-        <button onClick={() => setView({ name: 'edit', postId: post.id })}>編集</button>
+      <div className="actions">
+        <button className="act" onClick={() => copy(title, 'タイトル')}>タイトルをコピー</button>
+        {url && <button className="act" onClick={() => copy(url, 'URL')}>URLをコピー</button>}
+      </div>
+      <div className="actions subs">
+        <button className="sub" onClick={() => setView({ name: 'series', key: postSeriesKey(post) })}>シリーズを見る</button>
+        <button className="sub" onClick={() => setView({ name: 'edit', postId: post.id })}>編集</button>
       </div>
     </li>
+  );
+}
+
+function IconSearch() {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="M16 16l4.5 4.5" />
+    </svg>
+  );
+}
+function IconPlus() {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 8v8M8 12h8" />
+    </svg>
+  );
+}
+function IconGear() {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+      <path d="M4 7h10M18 7h2M4 17h2M10 17h10" />
+      <circle cx="16" cy="7" r="2" />
+      <circle cx="8" cy="17" r="2" />
+    </svg>
   );
 }
 
