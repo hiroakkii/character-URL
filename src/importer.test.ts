@@ -46,7 +46,7 @@ describe('planImport', () => {
     expect(second.post!.description).toBe('二作目\n昔の作品 illust/999');
     expect(second.warnings.length).toBe(1);
     expect(plan.rows[0].post!.links!.length).toBe(2);
-    expect(plan.rows[1].post!.links).toEqual([]);
+    expect(plan.rows[1].post!.links).toBeUndefined();
   });
 
   it('updates existing posts by illust id or skips them', () => {

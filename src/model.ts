@@ -264,6 +264,19 @@ export function uniqueSituations(posts: Post[]): string[] {
   return [...new Set(posts.map((p) => p.situation))].sort((a, b) => a.localeCompare(b, 'ja'));
 }
 
+/** 手動リンクを解除して自動リンクに戻す。onlyEmpty なら、リンク0件で固定されている投稿だけ */
+export function resetLinksToAuto(data: AppData, onlyEmpty: boolean): { data: AppData; count: number } {
+  let count = 0;
+  const now = Date.now();
+  const posts = data.posts.map((p) => {
+    if (!p.links || (onlyEmpty && p.links.length)) return p;
+    count++;
+    const { links: _drop, ...rest } = p;
+    return { ...rest, updatedAt: now };
+  });
+  return { data: { ...data, posts }, count };
+}
+
 /** バックアップ読み込み時の検証 */
 export function validateData(raw: unknown): AppData {
   const d = raw as Partial<AppData>;

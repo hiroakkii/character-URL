@@ -205,7 +205,8 @@ export function planImport(
       r.post!.description = [r.post!.description, ...unknown].filter(Boolean).join('\n');
       r.warnings.push(`リンク先が見つからない行 ${unknown.length}件 を解説文に残しました`);
     }
-    r.post!.links = links;
+    // リンク行が1つも無ければ自動リンク（同じシリーズの過去分）にする
+    r.post!.links = links.length ? links : undefined;
   }
 
   return {
