@@ -141,3 +141,19 @@ describe('default link labels', () => {
     ]);
   });
 });
+
+describe('resetLinksToAuto', () => {
+  it('clears empty manual link lists, or all of them', async () => {
+    const { resetLinksToAuto, emptyData } = await import('./model');
+    const a = { ...mk('A＆B', 'x', 1, '1'), links: [] };
+    const b = { ...mk('A＆B', 'x', 2, '2'), links: [{ postId: a.id, label: 'A1' }] };
+    const c = mk('A＆B', 'x', 3, '3');
+    const data = { ...emptyData(), posts: [a, b, c] };
+    const r1 = resetLinksToAuto(data, true);
+    expect(r1.count).toBe(1);
+    expect(r1.data.posts.map((p) => p.links)).toEqual([undefined, b.links, undefined]);
+    const r2 = resetLinksToAuto(data, false);
+    expect(r2.count).toBe(2);
+    expect(r2.data.posts.every((p) => p.links === undefined)).toBe(true);
+  });
+});

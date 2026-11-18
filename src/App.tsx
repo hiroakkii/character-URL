@@ -20,6 +20,7 @@ import {
   parseIllustId,
   postSeriesKey,
   renderLinks,
+  resetLinksToAuto,
   search,
   seriesKey,
   seriesPosts,
@@ -933,6 +934,14 @@ function SettingsView({
   };
 
   const s = data.settings;
+  const emptyLinkCount = data.posts.filter((p) => p.links && p.links.length === 0).length;
+  const manualLinkCount = data.posts.filter((p) => p.links).length;
+  const resetLinks = (onlyEmpty: boolean, message: string) => {
+    if (!confirm(message)) return;
+    const { data: next, count } = resetLinksToAuto(data, onlyEmpty);
+    replace(next);
+    notify(`${count}件を自動に戻しました`);
+  };
   return (
     <section>
       <h1>設定</h1>
@@ -964,6 +973,29 @@ function SettingsView({
 
       <h2>過去の投稿を一括取り込み</h2>
       <ImportPanel data={data} update={update} notify={notify} />
+
+      <h2>キャプションのリンク</h2>
+      <div className="card">
+        <p className="hint" style={{ marginTop: 0 }}>
+          手動で指定したリンクを解除して、同じシリーズの過去分を自動で貼る状態に戻します。
+        </p>
+        <button
+          className="primary"
+          disabled={emptyLinkCount === 0}
+          onClick={() => resetLinks(true, `リンク0件の投稿 ${emptyLinkCount}件を自動に戻しますか？`)}
+        >
+          リンク0件の投稿を自動に戻す（{emptyLinkCount}件）
+        </button>
+        <button
+          className="danger"
+          disabled={manualLinkCount === 0}
+          onClick={() =>
+            resetLinks(false, `手動で指定したリンクがある投稿 ${manualLinkCount}件をすべて自動に戻しますか？取り込んだ過去のキャプションのリンクも消えます。`)
+          }
+        >
+          手動リンクをすべて自動に戻す（{manualLinkCount}件）
+        </button>
+      </div>
 
       <h2>バックアップ</h2>
       <div className="card">
