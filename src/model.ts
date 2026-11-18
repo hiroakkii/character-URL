@@ -139,12 +139,14 @@ export function nextNumber(posts: Post[], key: string): number {
 
 /**
  * リンクの見出し。略称があれば「略称＋番号」（例：さつれな1）、
- * 未入力なら「キャラクター名 シチュエーション 番号」（例：甘織れな子＆琴紗月 キス 1）
+ * 未入力ならリンク先のタイトルそのまま（例：甘織れな子＆琴紗月 キス / 甘織れな子＆琴紗月 キス 2）
  */
-export function linkLabel(abbr: string, p: Pick<Post, 'characters' | 'situation' | 'number'>): string {
-  return abbr
-    ? `${abbr}${p.number}`
-    : buildTitle(p, { ...defaultSettings, showNumberOne: true });
+export function linkLabel(
+  abbr: string,
+  p: Pick<Post, 'characters' | 'situation' | 'number'>,
+  settings: Settings = defaultSettings,
+): string {
+  return abbr ? `${abbr}${p.number}` : buildTitle(p, settings);
 }
 
 /** 同じシリーズの過去分を、見出し付きで自動作成 */
@@ -153,6 +155,7 @@ export function autoLinkRefs(
   key: string,
   beforeNumber: number,
   abbr: string,
+  settings: Settings = defaultSettings,
 ): { refs: LinkRef[]; missing: number[] } {
   const refs: LinkRef[] = [];
   const missing: number[] = [];
@@ -162,7 +165,7 @@ export function autoLinkRefs(
       missing.push(p.number);
       continue;
     }
-    refs.push({ postId: p.id, label: linkLabel(abbr, p) });
+    refs.push({ postId: p.id, label: linkLabel(abbr, p, settings) });
   }
   return { refs, missing };
 }
@@ -185,8 +188,9 @@ export function buildLinkList(
   beforeNumber: number,
   abbr: string,
   format: Settings['linkFormat'],
+  settings: Settings = defaultSettings,
 ): { lines: string[]; missing: number[] } {
-  const { refs, missing } = autoLinkRefs(posts, key, beforeNumber, abbr);
+  const { refs, missing } = autoLinkRefs(posts, key, beforeNumber, abbr, settings);
   return { lines: renderLinks(posts, refs, format), missing };
 }
 

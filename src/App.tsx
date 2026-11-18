@@ -30,6 +30,7 @@ import {
   validateData,
 } from './model';
 import { copyText, useAppData } from './store';
+import { ImportPlan, applyImport, parseJsonText, planImport } from './importer';
 
 type View =
   | { name: 'search' }
@@ -320,7 +321,7 @@ function EditView({
   const urlInvalid = urlText.trim() !== '' && !illustId;
   const duplicate = pool.find((p) => postSeriesKey(p) === key && p.number === number);
 
-  const auto = useMemo(() => autoLinkRefs(pool, key, number, abbr), [pool, key, number, abbr]);
+  const auto = useMemo(() => autoLinkRefs(pool, key, number, abbr, data.settings), [pool, key, number, abbr, data.settings]);
   const links: LinkRef[] = manualLinks ?? auto.refs;
   const missing = manualLinks ? [] : auto.missing;
   const lines = renderLinks(pool, links, data.settings.linkFormat);
@@ -417,8 +418,8 @@ function EditView({
           </div>
           <div>
             <label>コメント用の略称（任意）</label>
-            <input value={abbr} onChange={(e) => setAbbrText(e.target.value)} placeholder="未入力：キャラ名 シチュ" />
-            <p className="hint">空欄なら「キャラ名 シチュ 番号」で貼ります</p>
+            <input value={abbr} onChange={(e) => setAbbrText(e.target.value)} placeholder="空欄：タイトルのまま" />
+            <p className="hint">空欄ならリンク先のタイトルで貼ります</p>
           </div>
         </div>
         {duplicate && <p className="hint warn">このシリーズには既に番号{number}があります</p>}
@@ -604,7 +605,7 @@ function LinkEditor({
                 <button
                   onClick={() =>
                     editLinks((cur) =>
-                      renumber([...cur, { postId: p.id, label: abbr ? `${abbr}${cur.length + 1}` : linkLabel('', p) }]),
+                      renumber([...cur, { postId: p.id, label: abbr ? `${abbr}${cur.length + 1}` : linkLabel('', p, settings) }]),
                     )
                   }
                 >
@@ -651,7 +652,7 @@ function SeriesView({
     );
   }
   const first = posts[0];
-  const { lines } = buildLinkList(data.posts, key, Infinity, abbr, data.settings.linkFormat);
+  const { lines } = buildLinkList(data.posts, key, Infinity, abbr, data.settings.linkFormat, data.settings);
 
   const saveAbbr = () => {
     update((d) => ({ ...d, series: { ...d.series, [charsKey(first.characters)]: { abbr: abbr.trim() } } }));
@@ -699,7 +700,7 @@ function SeriesView({
       <div className="card">
         <label>コメント用の略称（任意）</label>
         <div className="row nowrap">
-          <input value={abbr} onChange={(e) => setAbbr(e.target.value)} placeholder="未入力：キャラ名 シチュ" />
+          <input value={abbr} onChange={(e) => setAbbr(e.target.value)} placeholder="空欄：タイトルのまま" />
           <button onClick={saveAbbr}>保存</button>
         </div>
       </div>
@@ -746,6 +747,143 @@ function SeriesView({
         </div>
       )}
     </section>
+  );
+}
+
+/* ---------------- 一括取り込み ---------------- */
+
+const MUSE_PROMPT = `pixivの投稿一覧を、次のJSON形式でまとめてください。JSON以外の文章は出力しないでください。
+{
+  "posts": [
+    {
+      "title": "投稿タイトルそのまま（例：甘織れな子＆琴紗月 キス 2）",
+      "url": "作品ページのURL（例：https://www.pixiv.net/artworks/151757375）",
+      "caption": "キャプション全文。改行は\\n。リンクの行も含める",
+      "postedAt": "投稿日 YYYY-MM-DD（分からなければ省略）"
+    }
+  ]
+}`;
+
+const STATUS_LABEL: Record<'new' | 'update' | 'error', string> = {
+  new: '新規',
+  update: '上書き',
+  error: '取り込まない',
+};
+
+function ImportPanel({ data, update, notify }: { data: AppData; update: Update; notify: (m: string) => void }) {
+  const [text, setText] = useState('');
+  const [skipExisting, setSkipExisting] = useState(false);
+  const [plan, setPlan] = useState<ImportPlan | null>(null);
+  const [error, setError] = useState('');
+
+  const check = (raw: string, skip = skipExisting) => {
+    try {
+      setPlan(planImport(data, parseJsonText(raw), { skipExisting: skip }));
+      setError('');
+    } catch (e) {
+      setPlan(null);
+      setError((e as Error).message || '読み取れませんでした');
+    }
+  };
+
+  const readFile = async (file?: File) => {
+    if (!file) return;
+    const t = await file.text();
+    setText(t);
+    check(t);
+  };
+
+  const run = () => {
+    if (!plan) return;
+    const n = plan.newCount + plan.updateCount;
+    update((d) => applyImport(d, plan));
+    notify(`${n}件を取り込みました`);
+    setPlan(null);
+    setText('');
+  };
+
+  return (
+    <div className="card">
+      <p className="hint" style={{ marginTop: 0 }}>
+        タイトル・URL・キャプションをまとめたJSONを読み込みます。今のデータに追加され、置き換えはしません。キャプション内のリンクの行は、そのままの見出しと順番でリンクとして登録します。
+      </p>
+      <div className="row">
+        <button
+          onClick={async () => notify((await copyText(MUSE_PROMPT)) ? 'muse への依頼文をコピーしました' : 'コピーに失敗しました')}
+        >
+          muse への依頼文をコピー
+        </button>
+      </div>
+
+      <label>JSONを貼り付け</label>
+      <textarea
+        rows={5}
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          setPlan(null);
+        }}
+        placeholder={'{ "posts": [ { "title": "…", "url": "…", "caption": "…" } ] }'}
+      />
+      <div className="grid2 import-actions">
+        <button disabled={!text.trim()} onClick={() => check(text)}>
+          内容を確認
+        </button>
+        <label className="filebtn">
+          ファイルを選ぶ
+          <input type="file" accept="application/json,.json,text/plain" onChange={(e) => readFile(e.target.files?.[0])} />
+        </label>
+      </div>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={skipExisting}
+          onChange={(e) => {
+            setSkipExisting(e.target.checked);
+            if (plan) check(text, e.target.checked);
+          }}
+        />
+        登録済みの作品は上書きせずに飛ばす
+      </label>
+
+      {error && <p className="hint warn">{error}</p>}
+
+      {plan && (
+        <div className="import-result">
+          <p className="import-summary">
+            新規 {plan.newCount}件 ／ 上書き {plan.updateCount}件 ／ 取り込まない {plan.errorCount}件
+          </p>
+          <ul className="import-rows">
+            {plan.rows.map((r) => (
+              <li key={r.index} className={r.status}>
+                <div className="import-row-head">
+                  <span className="import-badge">{STATUS_LABEL[r.status]}</span>
+                  <span className="import-title">
+                    {r.index}. {r.title}
+                  </span>
+                </div>
+                {r.post && r.post.links && r.post.links.length > 0 && (
+                  <p className="hint">リンク {r.post.links.length}件</p>
+                )}
+                {r.errors.map((m) => (
+                  <p key={m} className="hint warn">
+                    {m}
+                  </p>
+                ))}
+                {r.warnings.map((m) => (
+                  <p key={m} className="hint warn">
+                    {m}
+                  </p>
+                ))}
+              </li>
+            ))}
+          </ul>
+          <button className="primary" disabled={plan.newCount + plan.updateCount === 0} onClick={run}>
+            取り込む（{plan.newCount + plan.updateCount}件）
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -823,6 +961,9 @@ function SettingsView({
           1作目のタイトルにも「1」を付ける
         </label>
       </div>
+
+      <h2>過去の投稿を一括取り込み</h2>
+      <ImportPanel data={data} update={update} notify={notify} />
 
       <h2>バックアップ</h2>
       <div className="card">
