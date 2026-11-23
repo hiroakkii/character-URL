@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppData,
+  BoothLink,
   LinkRef,
   Post,
   SearchMode,
   autoLinkRefs,
+  buildBoothLines,
   buildCaption,
   buildLinkList,
   charsKey,
@@ -20,6 +22,7 @@ import {
   parseIllustId,
   postSeriesKey,
   renderLinks,
+  moveBoothLines,
   resetLinksToAuto,
   search,
   seriesKey,
@@ -277,6 +280,7 @@ function EditView({
   // null = 同じシリーズの過去分を自動で貼る / 配列 = 手動で指定した一覧
   const [manualLinks, setManualLinks] = useState<LinkRef[] | null>(existing?.links ?? null);
   const [picking, setPicking] = useState(false);
+  const [booth, setBooth] = useState<BoothLink[]>(existing?.booth ?? []);
   const newIds = useRef(new Map<string, string>());
 
   const characters = splitCharacters(charsText);
@@ -330,7 +334,8 @@ function EditView({
   // 一覧を編集すると、その時点の内容で固定される（自動に戻すこともできる）
   const editLinks = (fn: (cur: LinkRef[]) => LinkRef[]) => setManualLinks(fn(links.map((l) => ({ ...l }))));
   const title = characters.length && situation ? buildTitle({ characters, situation, number }, data.settings) : '';
-  const caption = buildCaption(description, lines);
+  const boothLines = buildBoothLines(data.settings, booth);
+  const caption = buildCaption(description, lines, boothLines);
   const canSave = characters.length > 0 && situation.trim() !== '' && !urlInvalid;
 
   const charSets = useMemo(() => uniqueCharacterSets(data.posts), [data.posts]);
@@ -347,6 +352,7 @@ function EditView({
       description,
       illustId,
       links: manualLinks ?? undefined,
+      booth: booth.some((b) => b.url.trim()) ? booth.filter((b) => b.url.trim()).map((b) => ({ label: b.label.trim(), url: b.url.trim() })) : undefined,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
@@ -471,6 +477,46 @@ function EditView({
         resetAuto={() => setManualLinks(null)}
         settings={data.settings}
       />
+
+      <h2>BOOTHのリンク</h2>
+      <div className="card">
+        <p className="hint" style={{ marginTop: 0 }}>
+          キャプションの最後に、1行空けて貼ります。トップページは全投稿に必ず入り、個別の商品はこの投稿にだけ入ります。
+        </p>
+        {data.settings.boothTopUrl.trim() ? (
+          <pre className="out booth-top">{buildBoothLines(data.settings)[0]}</pre>
+        ) : (
+          <p className="hint warn">トップページが未設定です。設定画面で登録してください</p>
+        )}
+        <ul className="booth-items">
+          {booth.map((b, i) => (
+            <li key={i}>
+              <input
+                value={b.label}
+                aria-label="商品の見出し"
+                placeholder="見出し（任意）　例：今回の作品"
+                onChange={(e) => setBooth(booth.map((x, k) => (k === i ? { ...x, label: e.target.value } : x)))}
+              />
+              <div className="row nowrap">
+                <input
+                  inputMode="url"
+                  value={b.url}
+                  aria-label="商品のURL"
+                  placeholder="https://○○.booth.pm/items/…"
+                  onChange={(e) => setBooth(booth.map((x, k) => (k === i ? { ...x, url: e.target.value } : x)))}
+                />
+                <button aria-label="削除" onClick={() => setBooth(booth.filter((_, k) => k !== i))}>
+                  ×
+                </button>
+              </div>
+              {b.url.trim() && !/booth\.pm/.test(b.url) && <p className="hint warn">BOOTHのURLではないようです</p>}
+            </li>
+          ))}
+        </ul>
+        <div className="row">
+          <button onClick={() => setBooth([...booth, { label: '', url: '' }])}>＋ 個別の商品リンクを追加</button>
+        </div>
+      </div>
 
       <h2>pixivに貼り付ける内容</h2>
       <div className="card">
@@ -936,6 +982,13 @@ function SettingsView({
   const s = data.settings;
   const emptyLinkCount = data.posts.filter((p) => p.links && p.links.length === 0).length;
   const manualLinkCount = data.posts.filter((p) => p.links).length;
+  const boothInDescCount = moveBoothLines(data).count;
+  const tidyBooth = () => {
+    if (!confirm(`解説文にBOOTHのリンクが残っている投稿 ${boothInDescCount}件を整理しますか？\n個別商品の行は商品リンクに移し、トップページの行は消します（設定のトップページが代わりに入ります）。`)) return;
+    const { data: next, count } = moveBoothLines(data);
+    replace(next);
+    notify(`${count}件を整理しました`);
+  };
   const resetLinks = (onlyEmpty: boolean, message: string) => {
     if (!confirm(message)) return;
     const { data: next, count } = resetLinksToAuto(data, onlyEmpty);
@@ -971,6 +1024,27 @@ function SettingsView({
         </label>
       </div>
 
+      <h2>BOOTHのトップページ</h2>
+      <div className="card">
+        <p className="hint" style={{ marginTop: 0 }}>
+          全投稿のキャプションの最後に、1行空けて必ず貼ります。個別の商品リンクは、各投稿の画面で追加できます。
+        </p>
+        <label>URL</label>
+        <input
+          inputMode="url"
+          value={s.boothTopUrl}
+          placeholder="https://○○.booth.pm/"
+          onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, boothTopUrl: e.target.value } }))}
+        />
+        <label>見出し（空欄ならURLだけ）</label>
+        <input
+          value={s.boothTopLabel}
+          placeholder="例：BOOTH"
+          onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, boothTopLabel: e.target.value } }))}
+        />
+        {s.boothTopUrl.trim() && <pre className="out">{buildBoothLines(s)[0]}</pre>}
+      </div>
+
       <h2>過去の投稿を一括取り込み</h2>
       <ImportPanel data={data} update={update} notify={notify} />
 
@@ -995,6 +1069,11 @@ function SettingsView({
         >
           手動リンクをすべて自動に戻す（{manualLinkCount}件）
         </button>
+        {boothInDescCount > 0 && (
+          <button className="primary" onClick={tidyBooth}>
+            解説文のBOOTHの行を整理する（{boothInDescCount}件）
+          </button>
+        )}
       </div>
 
       <h2>バックアップ</h2>

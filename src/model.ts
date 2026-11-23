@@ -6,6 +6,12 @@ export interface LinkRef {
   label: string;
 }
 
+/** BOOTH の商品リンク（見出しは任意） */
+export interface BoothLink {
+  label: string;
+  url: string;
+}
+
 export interface Post {
   id: string;
   /** キャラクター名（カップリングは複数） 例: ["甘織れな子", "琴紗月"] */
@@ -20,6 +26,8 @@ export interface Post {
   illustId: string;
   /** キャプションのリンクを手動で指定した場合のみ保存（未指定なら同じシリーズの過去分を自動で貼る） */
   links?: LinkRef[];
+  /** この投稿に貼る BOOTH の個別商品リンク（任意） */
+  booth?: BoothLink[];
   createdAt: number;
   updatedAt: number;
 }
@@ -34,6 +42,10 @@ export interface Settings {
   linkFormat: 'full' | 'short';
   /** 番号1のときタイトルに「1」を付けるか */
   showNumberOne: boolean;
+  /** BOOTH のトップページ（全投稿のキャプションの最後に必ず貼る） */
+  boothTopUrl: string;
+  /** トップページの行の見出し */
+  boothTopLabel: string;
 }
 
 export interface AppData {
@@ -43,7 +55,12 @@ export interface AppData {
   settings: Settings;
 }
 
-export const defaultSettings: Settings = { linkFormat: 'full', showNumberOne: false };
+export const defaultSettings: Settings = {
+  linkFormat: 'full',
+  showNumberOne: false,
+  boothTopUrl: '',
+  boothTopLabel: 'BOOTH',
+};
 
 export const emptyData = (): AppData => ({
   version: 1,
@@ -194,10 +211,57 @@ export function buildLinkList(
   return { lines: renderLinks(posts, refs, format), missing };
 }
 
-export function buildCaption(description: string, linkLines: string[]): string {
-  const desc = description.trimEnd();
-  if (!linkLines.length) return desc;
-  return desc ? `${desc}\n${linkLines.join('\n')}` : linkLines.join('\n');
+/**
+ * キャプション：解説 → 過去リンク → （1行空けて）BOOTH のリンク
+ */
+export function buildCaption(description: string, linkLines: string[], boothLines: string[] = []): string {
+  const main = [description.trimEnd(), ...linkLines].filter(Boolean).join('\n');
+  if (!boothLines.length) return main;
+  return main ? `${main}\n\n${boothLines.join('\n')}` : boothLines.join('\n');
+}
+
+const boothLine = (label: string, url: string) => (label.trim() ? `${label.trim()} ${url.trim()}` : url.trim());
+
+/** BOOTH の行：トップページ（設定にあれば必ず）→ この投稿の個別商品 */
+export function buildBoothLines(settings: Settings, items: BoothLink[] = []): string[] {
+  const lines: string[] = [];
+  if (settings.boothTopUrl.trim()) lines.push(boothLine(settings.boothTopLabel, settings.boothTopUrl));
+  for (const it of items) if (it.url.trim()) lines.push(boothLine(it.label, it.url));
+  return lines;
+}
+
+const BOOTH_URL = /(https?:\/\/(?:[\w-]+\.)?booth\.pm\S*)/;
+
+/** URL が BOOTH のショップのトップページ（https://xxx.booth.pm/）か */
+export function isBoothTop(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return /\.booth\.pm$/.test(u.hostname) && u.hostname !== 'www.booth.pm' && (u.pathname === '/' || u.pathname === '');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 解説文から BOOTH の行を取り出す（取り込んだ過去のキャプション用）
+ * トップページの行は捨て（設定のものを貼るため）、個別商品の行は商品リンクに移す
+ */
+export function extractBooth(description: string): { description: string; items: BoothLink[]; top?: BoothLink } {
+  const keep: string[] = [];
+  const items: BoothLink[] = [];
+  let top: BoothLink | undefined;
+  for (const line of description.split('\n')) {
+    const m = line.match(BOOTH_URL);
+    if (!m) {
+      keep.push(line);
+      continue;
+    }
+    const url = m[1];
+    const label = line.replace(url, '').trim();
+    if (isBoothTop(url)) top ??= { label, url };
+    else items.push({ label, url });
+  }
+  return { description: keep.join('\n').trim(), items, top };
 }
 
 /** 新しい順：未投稿（URL未登録）を先頭、その後は作品IDの大きい順 */
@@ -277,6 +341,20 @@ export function resetLinksToAuto(data: AppData, onlyEmpty: boolean): { data: App
   return { data: { ...data, posts }, count };
 }
 
+/** 登録済みの解説文に残っている BOOTH の行を整理する（個別商品は商品リンクへ移し、トップページの行は消す） */
+export function moveBoothLines(data: AppData): { data: AppData; count: number } {
+  let count = 0;
+  const now = Date.now();
+  const posts = data.posts.map((p) => {
+    const r = extractBooth(p.description);
+    if (r.description === p.description.trim() && !r.items.length && !r.top) return p;
+    count++;
+    const booth = [...(p.booth ?? []), ...r.items.filter((it) => !p.booth?.some((b) => b.url === it.url))];
+    return { ...p, description: r.description, booth: booth.length ? booth : undefined, updatedAt: now };
+  });
+  return { data: { ...data, posts }, count };
+}
+
 /** バックアップ読み込み時の検証 */
 export function validateData(raw: unknown): AppData {
   const d = raw as Partial<AppData>;
@@ -294,6 +372,9 @@ export function validateData(raw: unknown): AppData {
       number: Number(p.number) || 1,
       description: String(p.description ?? ''),
       illustId: String(p.illustId ?? ''),
+      booth: Array.isArray(p.booth)
+        ? p.booth.map((b) => ({ label: String(b.label ?? ''), url: String(b.url ?? '') }))
+        : undefined,
       links: Array.isArray(p.links)
         ? p.links.map((l) => ({ postId: String(l.postId), label: String(l.label ?? '') }))
         : undefined,

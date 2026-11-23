@@ -5,6 +5,7 @@ import {
   Post,
   parseIllustId,
   postSeriesKey,
+  extractBooth,
   splitCharacters,
 } from './model';
 
@@ -159,6 +160,9 @@ export function planImport(
     const postedAt = Date.parse(str(it?.postedAt));
     const cap = typeof it?.caption === 'string' ? splitCaption(it.caption) : null;
     captions.set(row, cap);
+    // BOOTH の行は解説文から外す（トップページは設定のものを貼る、個別商品は商品リンクへ）
+    const booth = cap ? extractBooth(cap.description) : null;
+    if (cap && booth) cap.description = booth.description;
 
     row.post = {
       id: existing?.id ?? crypto.randomUUID(),
@@ -168,6 +172,7 @@ export function planImport(
       description: cap ? cap.description : existing?.description ?? '',
       illustId,
       links: existing?.links,
+      booth: booth ? (booth.items.length ? booth.items : undefined) : existing?.booth,
       createdAt: Number.isFinite(postedAt) ? postedAt : existing?.createdAt ?? now - (items.length - i),
       updatedAt: now,
     };
