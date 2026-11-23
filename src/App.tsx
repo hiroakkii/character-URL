@@ -1,17 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppData,
+  BoothItem,
+  BoothLink,
   LinkRef,
   Post,
   SearchMode,
+  addToCatalog,
   autoLinkRefs,
+  buildBoothLines,
   buildCaption,
   buildLinkList,
   charsKey,
   findAbbr,
   buildTitle,
+  catalogFor,
   compareNewest,
   illustUrl,
+  isSameBoothUrl,
   joinCharacters,
   linkLabel,
   nextNumber,
@@ -20,6 +26,7 @@ import {
   parseIllustId,
   postSeriesKey,
   renderLinks,
+  moveBoothLines,
   resetLinksToAuto,
   search,
   seriesKey,
@@ -277,6 +284,9 @@ function EditView({
   // null = 同じシリーズの過去分を自動で貼る / 配列 = 手動で指定した一覧
   const [manualLinks, setManualLinks] = useState<LinkRef[] | null>(existing?.links ?? null);
   const [picking, setPicking] = useState(false);
+  const [booth, setBooth] = useState<BoothLink[]>(existing?.booth ?? []);
+  const [pickBooth, setPickBooth] = useState(false);
+  const [allBooth, setAllBooth] = useState(false);
   const newIds = useRef(new Map<string, string>());
 
   const characters = splitCharacters(charsText);
@@ -330,7 +340,8 @@ function EditView({
   // 一覧を編集すると、その時点の内容で固定される（自動に戻すこともできる）
   const editLinks = (fn: (cur: LinkRef[]) => LinkRef[]) => setManualLinks(fn(links.map((l) => ({ ...l }))));
   const title = characters.length && situation ? buildTitle({ characters, situation, number }, data.settings) : '';
-  const caption = buildCaption(description, lines);
+  const boothLines = buildBoothLines(data.settings, booth);
+  const caption = buildCaption(description, lines, boothLines);
   const canSave = characters.length > 0 && situation.trim() !== '' && !urlInvalid;
 
   const charSets = useMemo(() => uniqueCharacterSets(data.posts), [data.posts]);
@@ -347,6 +358,7 @@ function EditView({
       description,
       illustId,
       links: manualLinks ?? undefined,
+      booth: booth.some((b) => b.url.trim()) ? booth.filter((b) => b.url.trim()).map((b) => ({ label: b.label.trim(), url: b.url.trim() })) : undefined,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
@@ -370,7 +382,12 @@ function EditView({
             },
           ];
       });
-      return { ...d, posts, series: abbr ? { ...d.series, [charsKey(characters)]: { abbr } } : d.series };
+      return {
+        ...d,
+        posts,
+        boothCatalog: addToCatalog(d.boothCatalog ?? [], [post]),
+        series: abbr ? { ...d.series, [charsKey(characters)]: { abbr } } : d.series,
+      };
     });
     notify(existing ? '更新しました' : '保存しました');
     setView({ name: 'series', key });
@@ -471,6 +488,57 @@ function EditView({
         resetAuto={() => setManualLinks(null)}
         settings={data.settings}
       />
+
+      <h2>BOOTHのリンク</h2>
+      <div className="card">
+        <p className="hint" style={{ marginTop: 0 }}>
+          キャプションの最後に、1行空けて貼ります。トップページは全投稿に必ず入り、個別の商品はこの投稿にだけ入ります。
+        </p>
+        {data.settings.boothTopUrl.trim() ? (
+          <pre className="out booth-top">{buildBoothLines(data.settings)[0]}</pre>
+        ) : (
+          <p className="hint warn">トップページが未設定です。設定画面で登録してください</p>
+        )}
+        <ul className="booth-items">
+          {booth.map((b, i) => (
+            <li key={i}>
+              <input
+                value={b.label}
+                aria-label="商品の見出し"
+                placeholder="見出し（任意）　例：今回の作品"
+                onChange={(e) => setBooth(booth.map((x, k) => (k === i ? { ...x, label: e.target.value } : x)))}
+              />
+              <div className="row nowrap">
+                <input
+                  inputMode="url"
+                  value={b.url}
+                  aria-label="商品のURL"
+                  placeholder="https://○○.booth.pm/items/…"
+                  onChange={(e) => setBooth(booth.map((x, k) => (k === i ? { ...x, url: e.target.value } : x)))}
+                />
+                <button aria-label="削除" onClick={() => setBooth(booth.filter((_, k) => k !== i))}>
+                  ×
+                </button>
+              </div>
+              {b.url.trim() && !/booth\.pm/.test(b.url) && <p className="hint warn">BOOTHのURLではないようです</p>}
+            </li>
+          ))}
+        </ul>
+        <div className="row">
+          <button onClick={() => setPickBooth(!pickBooth)}>{pickBooth ? '閉じる' : '登録済みの商品から選ぶ'}</button>
+          <button onClick={() => setBooth([...booth, { label: '', url: '' }])}>＋ 新しく入力</button>
+        </div>
+        {pickBooth && (
+          <BoothPicker
+            catalog={data.boothCatalog ?? []}
+            characters={characters}
+            showAll={allBooth}
+            setShowAll={setAllBooth}
+            used={booth}
+            onPick={(it) => setBooth([...booth.filter((b) => b.url.trim()), { label: it.label, url: it.url }])}
+          />
+        )}
+      </div>
 
       <h2>pixivに貼り付ける内容</h2>
       <div className="card">
@@ -888,6 +956,121 @@ function ImportPanel({ data, update, notify }: { data: AppData; update: Update; 
   );
 }
 
+/* ---------------- BOOTH 商品 ---------------- */
+
+function BoothPicker({
+  catalog,
+  characters,
+  showAll,
+  setShowAll,
+  used,
+  onPick,
+}: {
+  catalog: BoothItem[];
+  characters: string[];
+  showAll: boolean;
+  setShowAll: (v: boolean) => void;
+  used: BoothLink[];
+  onPick: (it: BoothItem) => void;
+}) {
+  const list = (showAll || !characters.length ? catalog : catalogFor(catalog, characters)).filter(
+    (it) => !used.some((b) => isSameBoothUrl(b.url, it.url)),
+  );
+  return (
+    <div className="picker">
+      <p className="hint" style={{ marginTop: 0 }}>
+        {characters.length && !showAll
+          ? `${characters.join('・')} の商品と、キャラ指定なしの商品を表示しています。`
+          : 'すべての商品を表示しています。'}
+      </p>
+      {characters.length > 0 && (
+        <label className="check" style={{ marginTop: 4 }}>
+          <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
+          ほかのキャラの商品も表示
+        </label>
+      )}
+      <ul className="list">
+        {list.map((it) => (
+          <li key={it.id} className="pick">
+            <span>
+              {it.label || '（見出しなし）'}
+              <span className="pick-sub">{it.url}</span>
+            </span>
+            <button onClick={() => onPick(it)}>追加</button>
+          </li>
+        ))}
+        {list.length === 0 && (
+          <li className="muted">
+            {catalog.length ? '表示できる商品がありません。' : '登録済みの商品はまだありません。設定画面か「＋ 新しく入力」で登録できます。'}
+          </li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+function BoothCatalogRow({
+  item,
+  onChange,
+  onRemove,
+}: {
+  item: BoothItem;
+  onChange: (it: BoothItem) => void;
+  onRemove: () => void;
+}) {
+  const [chars, setChars] = useState(joinCharacters(item.characters));
+  return (
+    <li>
+      <input value={item.label} aria-label="商品の見出し" placeholder="見出し　例：新刊" onChange={(e) => onChange({ ...item, label: e.target.value })} />
+      <input inputMode="url" value={item.url} aria-label="商品のURL" placeholder="https://○○.booth.pm/items/…" onChange={(e) => onChange({ ...item, url: e.target.value })} />
+      <div className="row nowrap">
+        <input
+          value={chars}
+          aria-label="キャラクター名"
+          placeholder="キャラ名（＆区切り・空欄で全キャラ）"
+          onChange={(e) => setChars(e.target.value)}
+          onBlur={() => onChange({ ...item, characters: splitCharacters(chars) })}
+        />
+        <button aria-label="削除" onClick={onRemove}>
+          ×
+        </button>
+      </div>
+    </li>
+  );
+}
+
+function BoothCatalogEditor({ data, update }: { data: AppData; update: Update }) {
+  const catalog = data.boothCatalog ?? [];
+  const setCatalog = (fn: (c: BoothItem[]) => BoothItem[]) => update((d) => ({ ...d, boothCatalog: fn(d.boothCatalog ?? []) }));
+  return (
+    <div className="card">
+      <p className="hint" style={{ marginTop: 0 }}>
+        投稿画面の「登録済みの商品から選ぶ」に出る一覧です。投稿で使った商品は自動で登録されます。キャラ名を入れると、そのキャラの投稿でだけ表示されます。
+      </p>
+      <ul className="booth-items catalog">
+        {catalog.map((it) => (
+          <BoothCatalogRow
+            key={it.id}
+            item={it}
+            onChange={(next) => setCatalog((c) => c.map((x) => (x.id === it.id ? next : x)))}
+            onRemove={() => {
+              if (confirm(`「${it.label || it.url}」を一覧から削除しますか？（投稿に貼ったリンクは消えません）`)) {
+                setCatalog((c) => c.filter((x) => x.id !== it.id));
+              }
+            }}
+          />
+        ))}
+      </ul>
+      {catalog.length === 0 && <p className="muted">まだ登録されていません。</p>}
+      <div className="row">
+        <button onClick={() => setCatalog((c) => [...c, { id: crypto.randomUUID(), label: '', url: '', characters: [] }])}>
+          ＋ 商品を登録
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ---------------- 設定 ---------------- */
 
 function SettingsView({
@@ -936,6 +1119,13 @@ function SettingsView({
   const s = data.settings;
   const emptyLinkCount = data.posts.filter((p) => p.links && p.links.length === 0).length;
   const manualLinkCount = data.posts.filter((p) => p.links).length;
+  const boothInDescCount = moveBoothLines(data).count;
+  const tidyBooth = () => {
+    if (!confirm(`解説文にBOOTHのリンクが残っている投稿 ${boothInDescCount}件を整理しますか？\n個別商品の行は商品リンクに移し、トップページの行は消します（設定のトップページが代わりに入ります）。`)) return;
+    const { data: next, count } = moveBoothLines(data);
+    replace(next);
+    notify(`${count}件を整理しました`);
+  };
   const resetLinks = (onlyEmpty: boolean, message: string) => {
     if (!confirm(message)) return;
     const { data: next, count } = resetLinksToAuto(data, onlyEmpty);
@@ -971,6 +1161,30 @@ function SettingsView({
         </label>
       </div>
 
+      <h2>BOOTHのトップページ</h2>
+      <div className="card">
+        <p className="hint" style={{ marginTop: 0 }}>
+          全投稿のキャプションの最後に、1行空けて必ず貼ります。個別の商品リンクは、各投稿の画面で追加できます。
+        </p>
+        <label>URL</label>
+        <input
+          inputMode="url"
+          value={s.boothTopUrl}
+          placeholder="https://○○.booth.pm/"
+          onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, boothTopUrl: e.target.value } }))}
+        />
+        <label>見出し（空欄ならURLだけ）</label>
+        <input
+          value={s.boothTopLabel}
+          placeholder="例：BOOTH"
+          onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, boothTopLabel: e.target.value } }))}
+        />
+        {s.boothTopUrl.trim() && <pre className="out">{buildBoothLines(s)[0]}</pre>}
+      </div>
+
+      <h2>BOOTHの商品一覧</h2>
+      <BoothCatalogEditor data={data} update={update} />
+
       <h2>過去の投稿を一括取り込み</h2>
       <ImportPanel data={data} update={update} notify={notify} />
 
@@ -995,6 +1209,11 @@ function SettingsView({
         >
           手動リンクをすべて自動に戻す（{manualLinkCount}件）
         </button>
+        {boothInDescCount > 0 && (
+          <button className="primary" onClick={tidyBooth}>
+            解説文のBOOTHの行を整理する（{boothInDescCount}件）
+          </button>
+        )}
       </div>
 
       <h2>バックアップ</h2>

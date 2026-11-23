@@ -239,3 +239,11 @@ button.sub { background: var(--field); color: var(--muted); font-weight: 700; mi
 .import-badge { flex-shrink: 0; font-size: 0.75rem; font-weight: 700; border-radius: 6px; padding: 1px 6px; background: var(--accent-soft); color: var(--accent); }
 .import-rows li.update .import-badge { background: #fff4e5; color: var(--warn); }
 .import-rows li.error .import-badge { background: #fdecec; color: var(--danger); }
+
+/* BOOTH のリンク */
+.booth-top { margin-top: 0; }
+.booth-items { list-style: none; margin: 8px 0 0; padding: 0; }
+.booth-items li { display: grid; gap: 6px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.booth-items .row.nowrap button { min-width: 48px; background: var(--field); color: var(--text); }
+.pick-sub { display: block; font-size: 0.78rem; color: var(--muted); word-break: break-all; }
+.booth-items.catalog li { gap: 6px; }

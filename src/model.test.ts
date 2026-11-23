@@ -4,6 +4,7 @@ import {
   autoLinkRefs,
   buildCaption,
   charsKey,
+  defaultSettings,
   findAbbr,
   linkLabel,
   renderLinks,
@@ -133,7 +134,7 @@ describe('default link labels', () => {
     const b = mk('甘織れな子＆琴紗月', 'キス', 2, '100000003');
     const key = seriesKey(['甘織れな子', '琴紗月'], 'キス');
     expect(linkLabel('', a)).toBe('甘織れな子＆琴紗月 キス');
-    expect(linkLabel('', a, { linkFormat: 'full', showNumberOne: true })).toBe('甘織れな子＆琴紗月 キス 1');
+    expect(linkLabel('', a, { ...defaultSettings, showNumberOne: true })).toBe('甘織れな子＆琴紗月 キス 1');
     expect(linkLabel('さつれな', a)).toBe('さつれな1');
     expect(autoLinkRefs([a, b], key, 3, '').refs.map((r) => r.label)).toEqual([
       '甘織れな子＆琴紗月 キス',
@@ -155,5 +156,57 @@ describe('resetLinksToAuto', () => {
     const r2 = resetLinksToAuto(data, false);
     expect(r2.count).toBe(2);
     expect(r2.data.posts.every((p) => p.links === undefined)).toBe(true);
+  });
+});
+
+describe('BOOTH links', () => {
+  it('puts BOOTH lines at the end after one blank line, top page first', async () => {
+    const { buildBoothLines } = await import('./model');
+    const s = { ...defaultSettings, boothTopUrl: 'https://shop.booth.pm/', boothTopLabel: 'BOOTH' };
+    const lines = buildBoothLines(s, [{ label: '今回の作品', url: 'https://shop.booth.pm/items/123' }, { label: '', url: '  ' }]);
+    expect(lines).toEqual(['BOOTH https://shop.booth.pm/', '今回の作品 https://shop.booth.pm/items/123']);
+    expect(buildCaption('解説', ['さつれな1 illust/1'], lines)).toBe(
+      '解説\nさつれな1 illust/1\n\nBOOTH https://shop.booth.pm/\n今回の作品 https://shop.booth.pm/items/123',
+    );
+    expect(buildCaption('解説', [], [])).toBe('解説');
+    expect(buildBoothLines({ ...defaultSettings, boothTopLabel: '' , boothTopUrl: 'https://shop.booth.pm/' })).toEqual(['https://shop.booth.pm/']);
+  });
+
+  it('extracts BOOTH lines from old captions', async () => {
+    const { extractBooth, isBoothTop, moveBoothLines, emptyData } = await import('./model');
+    expect(isBoothTop('https://shop.booth.pm/')).toBe(true);
+    expect(isBoothTop('https://shop.booth.pm/items/1')).toBe(false);
+    expect(isBoothTop('https://booth.pm/ja/items/1')).toBe(false);
+    const r = extractBooth('解説\n\nBOOTH https://shop.booth.pm/\n新刊 https://booth.pm/ja/items/9');
+    expect(r).toEqual({
+      description: '解説',
+      items: [{ label: '新刊', url: 'https://booth.pm/ja/items/9' }],
+      top: { label: 'BOOTH', url: 'https://shop.booth.pm/' },
+    });
+    const post = { ...mk('A＆B', 'x', 1, '1'), description: '解説\nBOOTH https://shop.booth.pm/' };
+    const plain = { ...mk('A＆B', 'x', 2, '2'), description: '解説だけ' };
+    const m = moveBoothLines({ ...emptyData(), posts: [post, plain] });
+    expect(m.count).toBe(1);
+    expect(m.data.posts[0].description).toBe('解説');
+    expect(m.data.posts[1]).toBe(plain);
+  });
+});
+
+describe('BOOTH catalog', () => {
+  it('collects item links from posts and filters by character', async () => {
+    const { addToCatalog, catalogFor, validateData } = await import('./model');
+    const a = { ...mk('甘織れな子＆琴紗月', 'キス', 1, '1'), booth: [{ label: '新刊', url: 'https://s.booth.pm/items/1' }] };
+    const b = { ...mk('甘織れな子＆王塚真唯', '水着', 1, '2'), booth: [{ label: '', url: 'https://s.booth.pm/items/1/' }, { label: '画集', url: 'https://s.booth.pm/items/2' }] };
+    const cat = addToCatalog([], [a, b]);
+    expect(cat.map((c) => [c.label, c.characters])).toEqual([
+      ['新刊', ['甘織れな子', '琴紗月', '王塚真唯']],
+      ['画集', ['甘織れな子', '王塚真唯']],
+    ]);
+    const common = { id: 'x', label: '全キャラ', url: 'https://s.booth.pm/items/3', characters: [] };
+    expect(catalogFor([...cat, common], ['琴紗月']).map((c) => c.label)).toEqual(['新刊', '全キャラ']);
+    expect(catalogFor([...cat, common], ['王塚真唯']).map((c) => c.label)).toEqual(['新刊', '画集', '全キャラ']);
+    expect(catalogFor([...cat, common], ['琴紗月', '甘織れな子']).map((c) => c.label)).toEqual(['新刊', '全キャラ']);
+    // 古いデータ（一覧なし）は投稿から一覧を作る
+    expect(validateData({ posts: [a] }).boothCatalog?.length).toBe(1);
   });
 });

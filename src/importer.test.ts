@@ -64,3 +64,16 @@ describe('planImport', () => {
     expect(planImport(emptyData(), parseJsonText('```json\n[{"title":"A＆B シチュ","url":"1"}]\n```'), { skipExisting: false }).newCount).toBe(1);
   });
 });
+
+describe('BOOTH lines in imported captions', () => {
+  it('moves item links out of the description and drops the top page line', () => {
+    const plan = planImport(
+      emptyData(),
+      { posts: [{ title: 'A＆B シチュ', url: '1', caption: '解説\n\nBOOTH https://shop.booth.pm/\n新刊 https://shop.booth.pm/items/5' }] },
+      { skipExisting: false },
+    );
+    const p = plan.rows[0].post!;
+    expect(p.description).toBe('解説');
+    expect(p.booth).toEqual([{ label: '新刊', url: 'https://shop.booth.pm/items/5' }]);
+  });
+});

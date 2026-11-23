@@ -5,6 +5,8 @@ import {
   Post,
   parseIllustId,
   postSeriesKey,
+  addToCatalog,
+  extractBooth,
   splitCharacters,
 } from './model';
 
@@ -159,6 +161,9 @@ export function planImport(
     const postedAt = Date.parse(str(it?.postedAt));
     const cap = typeof it?.caption === 'string' ? splitCaption(it.caption) : null;
     captions.set(row, cap);
+    // BOOTH の行は解説文から外す（トップページは設定のものを貼る、個別商品は商品リンクへ）
+    const booth = cap ? extractBooth(cap.description) : null;
+    if (cap && booth) cap.description = booth.description;
 
     row.post = {
       id: existing?.id ?? crypto.randomUUID(),
@@ -168,6 +173,7 @@ export function planImport(
       description: cap ? cap.description : existing?.description ?? '',
       illustId,
       links: existing?.links,
+      booth: booth ? (booth.items.length ? booth.items : undefined) : existing?.booth,
       createdAt: Number.isFinite(postedAt) ? postedAt : existing?.createdAt ?? now - (items.length - i),
       updatedAt: now,
     };
@@ -223,7 +229,7 @@ export function applyImport(data: AppData, plan: ImportPlan): AppData {
   const posts = data.posts.map((p) => incoming.get(p.id) ?? p);
   const existingIds = new Set(data.posts.map((p) => p.id));
   for (const p of incoming.values()) if (!existingIds.has(p.id)) posts.push(p);
-  return { ...data, posts };
+  return { ...data, posts, boothCatalog: addToCatalog(data.boothCatalog ?? [], [...incoming.values()]) };
 }
 
 /** JSON 文字列を読む（コードブロックの ``` で囲まれていても可） */
