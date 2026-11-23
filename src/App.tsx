@@ -874,7 +874,7 @@ function ImportPanel({ data, update, notify }: { data: AppData; update: Update; 
   return (
     <div className="card">
       <p className="hint" style={{ marginTop: 0 }}>
-        タイトル・URL・キャプションをまとめたJSONを読み込みます。今のデータに追加され、置き換えはしません。キャプション内のリンクの行は、そのままの見出しと順番でリンクとして登録します。
+        タイトル・URL・キャプションをまとめたJSONか、このアプリで書き出したバックアップのファイルを読み込みます。今のデータに追加され（作品IDが同じ投稿は上書き）、置き換えはしません。キャプション内のリンクの行は、そのままの見出しと順番でリンクとして登録します。
       </p>
       <div className="row">
         <button

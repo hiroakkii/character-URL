@@ -77,3 +77,25 @@ describe('BOOTH lines in imported captions', () => {
     expect(p.booth).toEqual([{ label: '新刊', url: 'https://shop.booth.pm/items/5' }]);
   });
 });
+
+describe('app backup files', () => {
+  it('imports backup posts with their links and BOOTH items', () => {
+    const backup = {
+      version: 1,
+      posts: [
+        { id: 'b2', characters: ['A', 'B'], situation: 'x', number: 2, description: '二', illustId: '20', links: [{ postId: 'b1', label: 'AB1' }, { postId: 'gone', label: '?' }], booth: [{ label: '本', url: 'https://s.booth.pm/items/1' }], createdAt: 200, updatedAt: 1 },
+        { id: 'b1', characters: ['A', 'B'], situation: 'x', number: 1, description: '一', illustId: '10', createdAt: 100, updatedAt: 1 },
+      ],
+    };
+    const plan = planImport(emptyData(), backup, { skipExisting: false });
+    expect([plan.newCount, plan.errorCount]).toEqual([2, 0]);
+    expect(plan.rows[0].title).toBe('A＆B x 2');
+    const data = applyImport(emptyData(), plan);
+    const p2 = data.posts.find((p) => p.illustId === '20')!;
+    expect(renderLinks(data.posts, p2.links!, 'short')).toEqual(['AB1 illust/10']);
+    expect(plan.rows[0].warnings.length).toBe(1);
+    expect(p2.booth).toEqual([{ label: '本', url: 'https://s.booth.pm/items/1' }]);
+    expect(p2.createdAt).toBe(200);
+    expect(data.posts.find((p) => p.illustId === '10')!.links).toBeUndefined();
+  });
+});

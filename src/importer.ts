@@ -7,6 +7,7 @@ import {
   postSeriesKey,
   addToCatalog,
   extractBooth,
+  buildTitle,
   splitCharacters,
 } from './model';
 
@@ -19,6 +20,13 @@ export interface ImportItem {
   characters?: unknown;
   situation?: unknown;
   number?: unknown;
+  // ↓ アプリのバックアップ（書き出したファイル）の形
+  id?: unknown;
+  illustId?: unknown;
+  description?: unknown;
+  links?: unknown;
+  booth?: unknown;
+  createdAt?: unknown;
 }
 
 export interface ImportRow {
@@ -119,6 +127,10 @@ export function planImport(
   const seenIllust = new Map<string, number>();
   const rows: ImportRow[] = [];
   const captions = new Map<ImportRow, ReturnType<typeof splitCaption> | null>();
+  // バックアップの投稿：元の id → 取り込み後の id、元のリンク
+  const backupIds = new Map<string, string>();
+  const backupLinks = new Map<ImportRow, { postId: string; label: string }[]>();
+  const existingIds = new Set(data.posts.map((p) => p.id));
 
   // 1回目：各投稿を組み立てる（リンク先の解決は全件そろってから）
   items.forEach((it, i) => {
@@ -139,7 +151,9 @@ export function planImport(
       row.errors.push('タイトルを「キャラ名 シチュ 番号」に分けられません');
     }
 
-    const illustId = parseIllustId(str(it?.url));
+    // バックアップのファイルには url の代わりに illustId がある
+    const illustId = parseIllustId(str(it?.url) || str(it?.illustId));
+    if (!title && parsed && parsed.characters.length && parsed.situation) row.title = buildTitle(parsed);
     if (!illustId) row.errors.push('URLから作品IDを読み取れません');
     else if (seenIllust.has(illustId)) {
       row.errors.push(`${seenIllust.get(illustId)}件目と同じ作品です`);
@@ -159,22 +173,44 @@ export function planImport(
     row.status = existing ? 'update' : 'new';
 
     const postedAt = Date.parse(str(it?.postedAt));
+    const isBackup = typeof it?.caption !== 'string' && typeof it?.description === 'string';
+    const backupId = str(it?.id);
     const cap = typeof it?.caption === 'string' ? splitCaption(it.caption) : null;
     captions.set(row, cap);
     // BOOTH の行は解説文から外す（トップページは設定のものを貼る、個別商品は商品リンクへ）
     const booth = cap ? extractBooth(cap.description) : null;
     if (cap && booth) cap.description = booth.description;
 
+    const id =
+      existing?.id ?? (isBackup && backupId && !existingIds.has(backupId) ? backupId : crypto.randomUUID());
+    if (isBackup && backupId) backupIds.set(backupId, id);
+    if (isBackup && Array.isArray(it.links)) {
+      backupLinks.set(
+        row,
+        (it.links as { postId?: unknown; label?: unknown }[]).map((l) => ({ postId: str(l?.postId), label: str(l?.label) })),
+      );
+    }
+    const backupBooth = isBackup && Array.isArray(it.booth)
+      ? (it.booth as { label?: unknown; url?: unknown }[]).map((b) => ({ label: str(b?.label), url: str(b?.url) })).filter((b) => b.url)
+      : null;
+    const backupCreated = Number(it?.createdAt);
+
     row.post = {
-      id: existing?.id ?? crypto.randomUUID(),
+      id,
       characters: parsed.characters,
       situation: parsed.situation,
       number: parsed.number,
-      description: cap ? cap.description : existing?.description ?? '',
+      description: cap ? cap.description : isBackup ? str(it.description) : existing?.description ?? '',
       illustId,
-      links: existing?.links,
-      booth: booth ? (booth.items.length ? booth.items : undefined) : existing?.booth,
-      createdAt: Number.isFinite(postedAt) ? postedAt : existing?.createdAt ?? now - (items.length - i),
+      links: isBackup ? undefined : existing?.links,
+      booth: backupBooth
+        ? backupBooth.length ? backupBooth : undefined
+        : booth ? (booth.items.length ? booth.items : undefined) : existing?.booth,
+      createdAt: Number.isFinite(postedAt)
+        ? postedAt
+        : isBackup && Number.isFinite(backupCreated) && backupCreated > 0
+          ? backupCreated
+          : existing?.createdAt ?? now - (items.length - i),
       updatedAt: now,
     };
   });
@@ -197,6 +233,21 @@ export function planImport(
   // 2回目：キャプションのリンク行を、取り込む投稿・登録済みの投稿に結び付ける
   const target = new Map<string, Post>(byIllust);
   for (const r of ok) target.set(r.post!.illustId, r.post!);
+  // バックアップのリンク：元の id を取り込み後の id に置き換える（見つからなければ登録済みの投稿の id として探す）
+  const knownIds = new Set([...data.posts.map((p) => p.id), ...ok.map((r) => r.post!.id)]);
+  for (const [r, list] of backupLinks) {
+    if (!r.post) continue;
+    const links: LinkRef[] = [];
+    let lost = 0;
+    for (const l of list) {
+      const to = backupIds.get(l.postId) ?? (knownIds.has(l.postId) ? l.postId : undefined);
+      if (to && to !== r.post.id) links.push({ postId: to, label: l.label });
+      else lost++;
+    }
+    if (lost) r.warnings.push(`リンク先が見つからないリンク ${lost}件 を外しました`);
+    r.post.links = links;
+  }
+
   for (const r of ok) {
     const cap = captions.get(r);
     if (!cap) continue; // キャプションなし：リンクは今の設定のまま（新規なら自動）
