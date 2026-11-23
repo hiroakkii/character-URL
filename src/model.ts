@@ -48,9 +48,20 @@ export interface Settings {
   boothTopLabel: string;
 }
 
+/** 登録済みの BOOTH 商品（投稿画面で選べる） */
+export interface BoothItem {
+  id: string;
+  label: string;
+  url: string;
+  /** 関係するキャラ（空ならどの投稿にも表示） */
+  characters: string[];
+}
+
 export interface AppData {
   version: 1;
   posts: Post[];
+  /** BOOTH 商品の一覧 */
+  boothCatalog?: BoothItem[];
   series: Record<string, SeriesMeta>;
   settings: Settings;
 }
@@ -341,6 +352,43 @@ export function resetLinksToAuto(data: AppData, onlyEmpty: boolean): { data: App
   return { data: { ...data, posts }, count };
 }
 
+const sameUrl = (a: string, b: string) => a.trim().replace(/\/+$/, '') === b.trim().replace(/\/+$/, '');
+
+/** 投稿で使った BOOTH 商品リンクを一覧に足す（同じURLならキャラ名を合わせ、見出しが空なら補う） */
+export function addToCatalog(catalog: BoothItem[], posts: Post[]): BoothItem[] {
+  const out = catalog.map((c) => ({ ...c, characters: [...c.characters] }));
+  for (const p of posts) {
+    for (const b of p.booth ?? []) {
+      if (!b.url.trim()) continue;
+      const hit = out.find((c) => sameUrl(c.url, b.url));
+      if (hit) {
+        for (const ch of p.characters) {
+          if (!hit.characters.some((x) => normalize(x) === normalize(ch))) hit.characters.push(ch);
+        }
+        if (!hit.label && b.label) hit.label = b.label;
+      } else {
+        out.push({ id: crypto.randomUUID(), label: b.label, url: b.url.trim(), characters: [...p.characters] });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * 投稿のキャラに合う商品：投稿のキャラ全員が商品のキャラに含まれるもの（キャラ名が空の商品は常に含む）
+ * 例：さつれなの投稿 → さつれな本は表示、まいれな本（真唯・れな子）は表示しない
+ */
+export function catalogFor(catalog: BoothItem[], characters: string[]): BoothItem[] {
+  const mine = characters.map(normalize);
+  return catalog.filter((c) => {
+    if (!c.characters.length) return true;
+    const theirs = new Set(c.characters.map(normalize));
+    return mine.every((x) => theirs.has(x));
+  });
+}
+
+export const isSameBoothUrl = sameUrl;
+
 /** 登録済みの解説文に残っている BOOTH の行を整理する（個別商品は商品リンクへ移し、トップページの行は消す） */
 export function moveBoothLines(data: AppData): { data: AppData; count: number } {
   let count = 0;
@@ -352,7 +400,7 @@ export function moveBoothLines(data: AppData): { data: AppData; count: number } 
     const booth = [...(p.booth ?? []), ...r.items.filter((it) => !p.booth?.some((b) => b.url === it.url))];
     return { ...p, description: r.description, booth: booth.length ? booth : undefined, updatedAt: now };
   });
-  return { data: { ...data, posts }, count };
+  return { data: { ...data, posts, boothCatalog: addToCatalog(data.boothCatalog ?? [], posts) }, count };
 }
 
 /** バックアップ読み込み時の検証 */
@@ -382,9 +430,18 @@ export function validateData(raw: unknown): AppData {
       updatedAt: Number(p.updatedAt) || Date.now(),
     };
   });
+  const boothCatalog = Array.isArray(d.boothCatalog)
+    ? d.boothCatalog.map((c: Partial<BoothItem>) => ({
+        id: String(c.id ?? crypto.randomUUID()),
+        label: String(c.label ?? ''),
+        url: String(c.url ?? ''),
+        characters: Array.isArray(c.characters) ? c.characters.map(String) : [],
+      }))
+    : addToCatalog([], posts); // 初回：投稿で使ったリンクから一覧を作る
   return {
     version: 1,
     posts,
+    boothCatalog,
     series: d.series && typeof d.series === 'object' ? d.series : {},
     settings: { ...defaultSettings, ...(d.settings ?? {}) },
   };

@@ -191,3 +191,22 @@ describe('BOOTH links', () => {
     expect(m.data.posts[1]).toBe(plain);
   });
 });
+
+describe('BOOTH catalog', () => {
+  it('collects item links from posts and filters by character', async () => {
+    const { addToCatalog, catalogFor, validateData } = await import('./model');
+    const a = { ...mk('甘織れな子＆琴紗月', 'キス', 1, '1'), booth: [{ label: '新刊', url: 'https://s.booth.pm/items/1' }] };
+    const b = { ...mk('甘織れな子＆王塚真唯', '水着', 1, '2'), booth: [{ label: '', url: 'https://s.booth.pm/items/1/' }, { label: '画集', url: 'https://s.booth.pm/items/2' }] };
+    const cat = addToCatalog([], [a, b]);
+    expect(cat.map((c) => [c.label, c.characters])).toEqual([
+      ['新刊', ['甘織れな子', '琴紗月', '王塚真唯']],
+      ['画集', ['甘織れな子', '王塚真唯']],
+    ]);
+    const common = { id: 'x', label: '全キャラ', url: 'https://s.booth.pm/items/3', characters: [] };
+    expect(catalogFor([...cat, common], ['琴紗月']).map((c) => c.label)).toEqual(['新刊', '全キャラ']);
+    expect(catalogFor([...cat, common], ['王塚真唯']).map((c) => c.label)).toEqual(['新刊', '画集', '全キャラ']);
+    expect(catalogFor([...cat, common], ['琴紗月', '甘織れな子']).map((c) => c.label)).toEqual(['新刊', '全キャラ']);
+    // 古いデータ（一覧なし）は投稿から一覧を作る
+    expect(validateData({ posts: [a] }).boothCatalog?.length).toBe(1);
+  });
+});
