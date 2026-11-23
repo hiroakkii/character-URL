@@ -162,7 +162,7 @@ describe('resetLinksToAuto', () => {
 describe('BOOTH links', () => {
   it('puts BOOTH lines at the end after one blank line, top page first', async () => {
     const { buildBoothLines } = await import('./model');
-    const s = { ...defaultSettings, boothTopUrl: 'https://shop.booth.pm/', boothTopLabel: 'BOOTH' };
+    const s = { ...defaultSettings, boothTopUrl: 'https://shop.booth.pm/', boothTopLabel: 'BOOTH', boothLayout: 'inline' as const };
     const lines = buildBoothLines(s, [{ label: '今回の作品', url: 'https://shop.booth.pm/items/123' }, { label: '', url: '  ' }]);
     expect(lines).toEqual(['BOOTH https://shop.booth.pm/', '今回の作品 https://shop.booth.pm/items/123']);
     expect(buildCaption('解説', ['さつれな1 illust/1'], lines)).toBe(
@@ -208,5 +208,27 @@ describe('BOOTH catalog', () => {
     expect(catalogFor([...cat, common], ['琴紗月', '甘織れな子']).map((c) => c.label)).toEqual(['新刊', '全キャラ']);
     // 古いデータ（一覧なし）は投稿から一覧を作る
     expect(validateData({ posts: [a] }).boothCatalog?.length).toBe(1);
+  });
+});
+
+describe('BOOTH separate-line layout', () => {
+  it('puts the marked label and the URL on separate lines', async () => {
+    const { buildBoothLines, extractBooth } = await import('./model');
+    const s = { ...defaultSettings, boothTopUrl: 'https://shop.booth.pm/' };
+    const lines = buildBoothLines(s, [{ label: '今回の作品', url: 'https://shop.booth.pm/items/88' }, { label: '', url: 'https://shop.booth.pm/items/99' }]);
+    expect(lines).toEqual(['▼BOOTH', 'https://shop.booth.pm/', '▼今回の作品', 'https://shop.booth.pm/items/88', 'https://shop.booth.pm/items/99']);
+    expect(buildBoothLines({ ...s, boothMark: '' })[0]).toBe('BOOTH');
+    // 別の行の形で貼った過去のキャプションも読み取れる
+    const r = extractBooth(`解説の最後の行\n\n${lines.join('\n')}`);
+    expect(r.description).toBe('解説の最後の行');
+    expect(r.top).toEqual({ label: 'BOOTH', url: 'https://shop.booth.pm/' });
+    expect(r.items).toEqual([
+      { label: '今回の作品', url: 'https://shop.booth.pm/items/88' },
+      { label: '', url: 'https://shop.booth.pm/items/99' },
+    ]);
+    // 記号なしでも、BOOTHの行の続きなら見出しとして取る。解説の行は取らない
+    const r2 = extractBooth('解説\nhttps://shop.booth.pm/\n新刊\nhttps://shop.booth.pm/items/1');
+    expect(r2.description).toBe('解説');
+    expect(r2.items).toEqual([{ label: '新刊', url: 'https://shop.booth.pm/items/1' }]);
   });
 });
