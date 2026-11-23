@@ -46,6 +46,10 @@ export interface Settings {
   boothTopUrl: string;
   /** トップページの行の見出し */
   boothTopLabel: string;
+  /** BOOTH の見出しと URL を同じ行に並べるか、別の行に分けるか */
+  boothLayout: 'inline' | 'separate';
+  /** 別の行にするとき、見出しの前に付ける記号（空なら付けない） */
+  boothMark: string;
 }
 
 /** 登録済みの BOOTH 商品（投稿画面で選べる） */
@@ -71,6 +75,8 @@ export const defaultSettings: Settings = {
   showNumberOne: false,
   boothTopUrl: '',
   boothTopLabel: 'BOOTH',
+  boothLayout: 'separate',
+  boothMark: '▼',
 };
 
 export const emptyData = (): AppData => ({
@@ -231,15 +237,24 @@ export function buildCaption(description: string, linkLines: string[], boothLine
   return main ? `${main}\n\n${boothLines.join('\n')}` : boothLines.join('\n');
 }
 
-const boothLine = (label: string, url: string) => (label.trim() ? `${label.trim()} ${url.trim()}` : url.trim());
+/** 見出しと URL を1行に、または「記号＋見出し」の行と URL の行に分ける */
+function boothEntry(settings: Settings, label: string, url: string): string[] {
+  const l = label.trim();
+  const u = url.trim();
+  if (!l) return [u];
+  return settings.boothLayout === 'separate' ? [`${settings.boothMark}${l}`, u] : [`${l} ${u}`];
+}
 
 /** BOOTH の行：トップページ（設定にあれば必ず）→ この投稿の個別商品 */
 export function buildBoothLines(settings: Settings, items: BoothLink[] = []): string[] {
   const lines: string[] = [];
-  if (settings.boothTopUrl.trim()) lines.push(boothLine(settings.boothTopLabel, settings.boothTopUrl));
-  for (const it of items) if (it.url.trim()) lines.push(boothLine(it.label, it.url));
+  if (settings.boothTopUrl.trim()) lines.push(...boothEntry(settings, settings.boothTopLabel, settings.boothTopUrl));
+  for (const it of items) if (it.url.trim()) lines.push(...boothEntry(settings, it.label, it.url));
   return lines;
 }
+
+/** 見出しの前に付いている記号（▼ ■ ★ など） */
+const LABEL_MARK = /^[▼▽■□★☆◆◇●○▶►・※]+\s*/;
 
 const BOOTH_URL = /(https?:\/\/(?:[\w-]+\.)?booth\.pm\S*)/;
 
@@ -261,6 +276,7 @@ export function extractBooth(description: string): { description: string; items:
   const keep: string[] = [];
   const items: BoothLink[] = [];
   let top: BoothLink | undefined;
+  let inBlock = false;
   for (const line of description.split('\n')) {
     const m = line.match(BOOTH_URL);
     if (!m) {
@@ -268,7 +284,15 @@ export function extractBooth(description: string): { description: string; items:
       continue;
     }
     const url = m[1];
-    const label = line.replace(url, '').trim();
+    let label = line.replace(url, '').trim();
+    // 見出しが前の行にある形（▼BOOTH ↵ URL）：記号付きの行か、BOOTH の行の続きなら見出しとして取る
+    const prev = keep[keep.length - 1];
+    if (!label && prev && prev.trim() && !BOOTH_URL.test(prev) && (LABEL_MARK.test(prev.trim()) || inBlock)) {
+      label = prev.trim();
+      keep.pop();
+    }
+    label = label.replace(LABEL_MARK, '').trim();
+    inBlock = true;
     if (isBoothTop(url)) top ??= { label, url };
     else items.push({ label, url });
   }

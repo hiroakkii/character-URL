@@ -495,7 +495,7 @@ function EditView({
           キャプションの最後に、1行空けて貼ります。トップページは全投稿に必ず入り、個別の商品はこの投稿にだけ入ります。
         </p>
         {data.settings.boothTopUrl.trim() ? (
-          <pre className="out booth-top">{buildBoothLines(data.settings)[0]}</pre>
+          <pre className="out booth-top">{buildBoothLines(data.settings).join('\n')}</pre>
         ) : (
           <p className="hint warn">トップページが未設定です。設定画面で登録してください</p>
         )}
@@ -1179,7 +1179,43 @@ function SettingsView({
           placeholder="例：BOOTH"
           onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, boothTopLabel: e.target.value } }))}
         />
-        {s.boothTopUrl.trim() && <pre className="out">{buildBoothLines(s)[0]}</pre>}
+        <label>見出しとURLの並べ方</label>
+        <div className="seg small">
+          <button
+            className={s.boothLayout === 'separate' ? 'on' : ''}
+            onClick={() => update((d) => ({ ...d, settings: { ...d.settings, boothLayout: 'separate' } }))}
+          >
+            別の行
+          </button>
+          <button
+            className={s.boothLayout === 'inline' ? 'on' : ''}
+            onClick={() => update((d) => ({ ...d, settings: { ...d.settings, boothLayout: 'inline' } }))}
+          >
+            同じ行
+          </button>
+        </div>
+        {s.boothLayout === 'separate' && (
+          <>
+            <label>見出しの前の記号</label>
+            <div className="row" style={{ marginTop: 0 }}>
+              {['▼', '■', '★', '◆', ''].map((m) => (
+                <button
+                  key={m || 'none'}
+                  className={`mark ${s.boothMark === m ? 'on' : ''}`}
+                  onClick={() => update((d) => ({ ...d, settings: { ...d.settings, boothMark: m } }))}
+                >
+                  {m || 'なし'}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        {s.boothTopUrl.trim() && (
+          <>
+            <label>キャプションでの見え方</label>
+            <pre className="out">{buildBoothLines(s, [{ label: '今回の作品', url: 'https://○○.booth.pm/items/…' }]).join('\n')}</pre>
+          </>
+        )}
       </div>
 
       <h2>BOOTHの商品一覧</h2>

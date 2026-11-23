@@ -247,3 +247,5 @@ button.sub { background: var(--field); color: var(--muted); font-weight: 700; mi
 .booth-items .row.nowrap button { min-width: 48px; background: var(--field); color: var(--text); }
 .pick-sub { display: block; font-size: 0.78rem; color: var(--muted); word-break: break-all; }
 .booth-items.catalog li { gap: 6px; }
+button.mark { min-width: 52px; background: var(--field); color: var(--text); font-size: 1rem; }
+button.mark.on { background: var(--accent); color: #fff; }
